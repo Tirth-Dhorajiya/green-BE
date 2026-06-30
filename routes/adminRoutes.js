@@ -1,0 +1,29 @@
+const express = require('express');
+const { body, param } = require('express-validator');
+const { getDashboardStats } = require('../controllers/adminController');
+const { getAllOrders, updateOrderStatus } = require('../controllers/orderController');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
+const validate = require('../middleware/validate');
+
+const router = express.Router();
+
+router.use(protect, adminOnly); // all admin routes guarded
+
+router.get('/stats', getDashboardStats);
+router.get('/orders', getAllOrders);
+
+router.put(
+  '/orders/:id/status',
+  [
+    param('id').isUUID().withMessage('Order ID must be a valid UUID'),
+    body('status')
+      .isIn(['pending', 'processing', 'shipped', 'delivered', 'cancelled'])
+      .withMessage('Invalid status value'),
+  ],
+  validate,
+  updateOrderStatus
+);
+
+module.exports = router;
+
+
