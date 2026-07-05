@@ -1,6 +1,6 @@
 const db = require('../config/db');
 
-const getAllProducts = ({ category, minPrice, maxPrice, search, limit, offset, sortBy, order }) => {
+const getAllProducts = ({ category, minPrice, maxPrice, search, featured, limit, offset, sortBy, order }) => {
   const conditions = [];
   const values = [];
   let idx = 1;
@@ -22,9 +22,12 @@ const getAllProducts = ({ category, minPrice, maxPrice, search, limit, offset, s
     values.push(`%${search}%`);
     idx++;
   }
+  if (featured === true || featured === 'true') {
+    conditions.push(`is_featured = true`);
+  }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const allowedSort = ['price', 'name', 'created_at', 'stock'];
+  const allowedSort = ['price', 'name', 'created_at', 'stock', 'is_featured'];
   const sortCol = allowedSort.includes(sortBy) ? sortBy : 'created_at';
   const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
 
@@ -43,12 +46,12 @@ const getAllProducts = ({ category, minPrice, maxPrice, search, limit, offset, s
 const getById = (id) =>
   db.query('SELECT * FROM products WHERE id = $1', [id]);
 
-const createProduct = ({ name, description, price, category, stock, image_url, images }) =>
+const createProduct = ({ name, description, price, category, stock, image_url, thumbnail_url, images, is_featured }) =>
   db.query(
-    `INSERT INTO products (name, description, price, category, stock, image_url, images)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO products (name, description, price, category, stock, image_url, thumbnail_url, images, is_featured)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
-    [name, description, price, category, stock, image_url, JSON.stringify(images || [])]
+    [name, description, price, category, stock, image_url, thumbnail_url, JSON.stringify(images || []), is_featured === true || is_featured === 'true']
   );
 
 const updateProduct = (id, fields) => {
@@ -65,7 +68,13 @@ const updateProduct = (id, fields) => {
 const deleteProduct = (id) =>
   db.query('DELETE FROM products WHERE id = $1 RETURNING id', [id]);
 
+const setFeatured = (id, isFeatured) =>
+  db.query(
+    'UPDATE products SET is_featured = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+    [isFeatured, id]
+  );
+
 const countProducts = () =>
   db.query('SELECT COUNT(*) FROM products');
 
-module.exports = { getAllProducts, getById, createProduct, updateProduct, deleteProduct, countProducts };
+module.exports = { getAllProducts, getById, createProduct, updateProduct, deleteProduct, setFeatured, countProducts };

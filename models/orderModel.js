@@ -1,13 +1,27 @@
 const db = require('../config/db');
 
-const createOrder = async (userId, totalPrice, items) => {
+const createOrder = async (userId, totalPrice, items, options = {}) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
 
     const orderResult = await client.query(
-      `INSERT INTO orders (user_id, total_price) VALUES ($1, $2) RETURNING *`,
-      [userId, totalPrice]
+      `INSERT INTO orders (
+        user_id, total_price, shipping_address, payment_status, payment_provider,
+        payment_reference, razorpay_order_id, razorpay_payment_id
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        userId,
+        totalPrice,
+        JSON.stringify(options.shipping_address || {}),
+        options.payment_status || 'pending',
+        options.payment_provider || null,
+        options.payment_reference || null,
+        options.razorpay_order_id || null,
+        options.razorpay_payment_id || null,
+      ]
     );
     const order = orderResult.rows[0];
 
@@ -42,7 +56,7 @@ const getOrdersByUser = (userId) =>
           'quantity', oi.quantity,
           'price', oi.price,
           'product_name', p.name,
-          'image_url', p.image_url
+          'image_url', COALESCE(p.thumbnail_url, p.image_url)
         )
       ) AS items
      FROM orders o
@@ -55,7 +69,13 @@ const getOrdersByUser = (userId) =>
   );
 
 const getAllOrders = ({ limit, offset, status }) => {
-  const conditions = status ? `WHERE o.status = '${status}'` : '';
+  const values = [];
+  let conditions = '';
+  if (status) {
+    values.push(status);
+    conditions = `WHERE o.status = $${values.length}`;
+  }
+  values.push(limit, offset);
   return db.query(
     `SELECT o.*, u.name AS user_name, u.email AS user_email,
             COUNT(*) OVER() AS total_count
@@ -63,8 +83,8 @@ const getAllOrders = ({ limit, offset, status }) => {
      JOIN users u ON o.user_id = u.id
      ${conditions}
      ORDER BY o.created_at DESC
-     LIMIT $1 OFFSET $2`,
-    [limit, offset]
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values
   );
 };
 
@@ -77,7 +97,7 @@ const getOrderById = (orderId) =>
           'quantity', oi.quantity,
           'price', oi.price,
           'product_name', p.name,
-          'image_url', p.image_url
+          'image_url', COALESCE(p.thumbnail_url, p.image_url)
         )
       ) AS items
      FROM orders o
@@ -100,4 +120,18 @@ const sumRevenue = () =>
 const countOrders = () =>
   db.query('SELECT COUNT(*) FROM orders');
 
-module.exports = { createOrder, getOrdersByUser, getAllOrders, getOrderById, updateStatus, sumRevenue, countOrders };
+const hasDeliveredProduct = (userId, productId) =>
+  db.query(
+    `SELECT o.id AS order_id
+     FROM orders o
+     JOIN order_items oi ON oi.order_id = o.id
+     WHERE o.user_id = $1
+       AND oi.product_id = $2
+       AND o.status = 'delivered'
+       AND o.payment_status = 'paid'
+     ORDER BY o.created_at DESC
+     LIMIT 1`,
+    [userId, productId]
+  );
+
+module.exports = { createOrder, getOrdersByUser, getAllOrders, getOrderById, updateStatus, sumRevenue, countOrders, hasDeliveredProduct };

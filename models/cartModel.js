@@ -3,7 +3,7 @@ const db = require('../config/db');
 const getCartByUser = (userId) =>
   db.query(
     `SELECT c.id, c.quantity, c.added_at,
-            p.id AS product_id, p.name, p.price, p.image_url, p.stock
+            p.id AS product_id, p.name, p.price, COALESCE(p.thumbnail_url, p.image_url) AS image_url, p.stock
      FROM cart c
      JOIN products p ON c.product_id = p.id
      WHERE c.user_id = $1

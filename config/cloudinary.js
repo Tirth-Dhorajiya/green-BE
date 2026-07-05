@@ -21,13 +21,19 @@ const storage = new CloudinaryStorage({
     folder: 'green-website',
     allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
     transformation: [
-      { width: 800, crop: 'scale' },
+      { width: 1200, height: 1200, crop: 'limit' },
       { fetch_format: 'auto', quality: 'auto' }
     ]
   }
 });
 
 // Allow up to 10 images per product
-const uploadCloud = multer({ storage: storage });
+const uploadCloud = multer({
+  storage,
+  limits: {
+    files: 10,
+    fileSize: 5 * 1024 * 1024,
+  },
+});
 
 module.exports = { cloudinary, storage, uploadCloud };

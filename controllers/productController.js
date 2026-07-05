@@ -1,10 +1,43 @@
 const productModel = require('../models/productModel');
+const { cloudinary } = require('../config/cloudinary');
+
+const parseBoolean = (value) => value === true || value === 'true' || value === '1';
+
+const normalizeImages = (images = []) => images.map((img, index) => ({
+  url: img.url,
+  public_id: img.public_id || img.publicId || null,
+  is_default: !!img.is_default,
+  is_thumbnail: !!img.is_thumbnail,
+  sort_order: Number.isInteger(img.sort_order) ? img.sort_order : index,
+}));
+
+const imagesFromFiles = (files, defaultIndex, thumbnailIndex) => files.map((file, index) => ({
+  url: file.path,
+  public_id: file.filename || file.public_id || null,
+  is_default: index === defaultIndex,
+  is_thumbnail: index === thumbnailIndex,
+  sort_order: index,
+}));
+
+const getImageUrls = (images) => {
+  const defaultImage = images.find((img) => img.is_default) || images[0];
+  const thumbnailImage = images.find((img) => img.is_thumbnail) || defaultImage;
+  return {
+    image_url: defaultImage?.url || null,
+    thumbnail_url: thumbnailImage?.url || defaultImage?.url || null,
+  };
+};
+
+const destroyCloudinaryImages = async (images = []) => {
+  const publicIds = images.map((img) => img.public_id).filter(Boolean);
+  await Promise.all(publicIds.map((publicId) => cloudinary.uploader.destroy(publicId).catch(() => null)));
+};
 
 // GET /api/products
 const getAllProducts = async (req, res, next) => {
   try {
     const {
-      category, minPrice, maxPrice, search,
+      category, minPrice, maxPrice, search, featured,
       page = 1, limit = 10, sortBy = 'created_at', order = 'desc',
     } = req.query;
 
@@ -16,7 +49,7 @@ const getAllProducts = async (req, res, next) => {
       category,
       minPrice: minPrice !== undefined ? parseFloat(minPrice) : undefined,
       maxPrice: maxPrice !== undefined ? parseFloat(maxPrice) : undefined,
-      search, limit: limitNum, offset, sortBy, order,
+      search, featured, limit: limitNum, offset, sortBy, order,
     });
 
     const totalCount = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
@@ -38,7 +71,7 @@ const getProduct = async (req, res, next) => {
 // POST /api/products (admin)
 const addProduct = async (req, res, next) => {
   try {
-    const { name, description, price, category, stock } = req.body;
+    const { name, description, price, category, stock, is_featured } = req.body;
 
     // req.files is an array when using .array('images', 10)
     const uploadedFiles = req.files || (req.file ? [req.file] : []);
@@ -48,18 +81,21 @@ const addProduct = async (req, res, next) => {
     const defaultIndex = parseInt(req.body.defaultIndex || '0', 10);
     const thumbnailIndex = parseInt(req.body.thumbnailIndex || '0', 10);
 
-    const images = uploadedFiles.map((file, i) => ({
-      url: file.path,
-      is_default: i === defaultIndex,
-      is_thumbnail: i === thumbnailIndex,
-    }));
+    const images = imagesFromFiles(uploadedFiles, defaultIndex, thumbnailIndex);
 
     // Primary image_url is the default one
-    const defaultImage = images.find(img => img.is_default);
-    const image_url = defaultImage ? defaultImage.url : (images[0]?.url || null);
+    const { image_url, thumbnail_url } = getImageUrls(images);
 
     const { rows } = await productModel.createProduct({
-      name, description, price, category, stock: stock || 0, image_url, images,
+      name,
+      description,
+      price,
+      category,
+      stock: stock || 0,
+      image_url,
+      thumbnail_url,
+      images,
+      is_featured: parseBoolean(is_featured),
     });
 
     res.status(201).json({ success: true, message: 'Product added', product: rows[0] });
@@ -72,7 +108,7 @@ const updateProduct = async (req, res, next) => {
     const { rows: existing } = await productModel.getById(req.params.id);
     if (!existing.length) return res.status(404).json({ success: false, message: 'Product not found' });
 
-    const updatable = ['name', 'description', 'price', 'category', 'stock'];
+    const updatable = ['name', 'description', 'price', 'category', 'stock', 'is_featured'];
     const fields = {};
     updatable.forEach((key) => {
       if (req.body[key] !== undefined) fields[key] = req.body[key];
@@ -88,17 +124,13 @@ const updateProduct = async (req, res, next) => {
       let existingImages = [];
       if (req.body.keepExistingImages === 'true' && req.body.imagesMetadata) {
         try {
-          existingImages = JSON.parse(req.body.imagesMetadata);
+          existingImages = normalizeImages(JSON.parse(req.body.imagesMetadata));
         } catch (_) {
-          existingImages = existing[0].images || [];
+          existingImages = normalizeImages(existing[0].images || []);
         }
       }
 
-      const newImages = uploadedFiles.map((file, i) => ({
-        url: file.path,
-        is_default: i === defaultIndex,
-        is_thumbnail: i === thumbnailIndex,
-      }));
+      const newImages = imagesFromFiles(uploadedFiles, defaultIndex, thumbnailIndex);
 
       const allImages = [...existingImages, ...newImages];
 
@@ -117,17 +149,30 @@ const updateProduct = async (req, res, next) => {
       if (allImages[absoluteThumbnailIndex]) allImages[absoluteThumbnailIndex].is_thumbnail = true;
       else if (allImages[0]) allImages[0].is_thumbnail = true;
 
+      allImages.forEach((img, index) => {
+        img.sort_order = index;
+      });
+
       fields.images = allImages;
-      const defaultImage = allImages.find(img => img.is_default);
-      fields.image_url = defaultImage ? defaultImage.url : allImages[0]?.url;
+      const { image_url, thumbnail_url } = getImageUrls(allImages);
+      fields.image_url = image_url;
+      fields.thumbnail_url = thumbnail_url;
     } else if (req.body.imagesMetadata) {
       // Client sent updated image metadata (e.g. changed default/thumbnail flags only)
       try {
-        const updatedImages = JSON.parse(req.body.imagesMetadata);
+        const updatedImages = normalizeImages(JSON.parse(req.body.imagesMetadata));
         fields.images = updatedImages;
-        const defaultImage = updatedImages.find((img) => img.is_default);
-        if (defaultImage) fields.image_url = defaultImage.url;
+        const { image_url, thumbnail_url } = getImageUrls(updatedImages);
+        fields.image_url = image_url;
+        fields.thumbnail_url = thumbnail_url;
       } catch (_) {}
+    }
+
+    if (fields.images) {
+      const previousImages = normalizeImages(existing[0].images || []);
+      const nextPublicIds = new Set(fields.images.map((img) => img.public_id).filter(Boolean));
+      const removedImages = previousImages.filter((img) => img.public_id && !nextPublicIds.has(img.public_id));
+      await destroyCloudinaryImages(removedImages);
     }
 
     if (!Object.keys(fields).length) {
@@ -142,10 +187,23 @@ const updateProduct = async (req, res, next) => {
 // DELETE /api/products/:id (admin)
 const deleteProduct = async (req, res, next) => {
   try {
+    const { rows: existing } = await productModel.getById(req.params.id);
+    if (!existing.length) return res.status(404).json({ success: false, message: 'Product not found' });
+
     const { rows } = await productModel.deleteProduct(req.params.id);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Product not found' });
+    await destroyCloudinaryImages(normalizeImages(existing[0].images || []));
     res.json({ success: true, message: 'Product deleted' });
   } catch (err) { next(err); }
 };
 
-module.exports = { getAllProducts, getProduct, addProduct, updateProduct, deleteProduct };
+// PUT /api/products/:id/featured (admin)
+const setFeaturedProduct = async (req, res, next) => {
+  try {
+    const { rows } = await productModel.setFeatured(req.params.id, parseBoolean(req.body.is_featured));
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Product not found' });
+    res.json({ success: true, message: 'Featured status updated', product: rows[0] });
+  } catch (err) { next(err); }
+};
+
+module.exports = { getAllProducts, getProduct, addProduct, updateProduct, deleteProduct, setFeaturedProduct };

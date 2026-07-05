@@ -6,14 +6,35 @@ const {
   addProduct,
   updateProduct,
   deleteProduct,
+  setFeaturedProduct,
 } = require('../controllers/productController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validate');
 const { uploadCloud } = require('../config/cloudinary');
+const { getProductReviews, createProductReview } = require('../controllers/reviewController');
 
 const router = express.Router();
 
 router.get('/', getAllProducts);
+
+router.get(
+  '/:id/reviews',
+  [param('id').isUUID().withMessage('Product ID must be a valid UUID')],
+  validate,
+  getProductReviews
+);
+
+router.post(
+  '/:id/reviews',
+  protect,
+  [
+    param('id').isUUID().withMessage('Product ID must be a valid UUID'),
+    body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
+    body('comment').optional().trim().isLength({ max: 1000 }).withMessage('Comment must be 1000 characters or less'),
+  ],
+  validate,
+  createProductReview
+);
 
 router.get(
   '/:id',
@@ -30,7 +51,7 @@ router.post(
   [
     body('name').trim().notEmpty().withMessage('Product name is required'),
     body('price').isFloat({ min: 0 }).withMessage('Price must be a non-negative number'),
-    body('category').isIn(['plants', 'seeds', 'tools', 'other']).withMessage('Category must be plants, seeds, tools, or other'),
+    body('category').isIn(['plants', 'seeds', 'tools', 'planters', 'other']).withMessage('Category must be plants, seeds, tools, planters, or other'),
     body('stock').optional().isInt({ min: 0 }).withMessage('Stock must be a non-negative integer'),
   ],
   validate,
@@ -45,7 +66,7 @@ router.put(
   [
     param('id').isUUID().withMessage('Product ID must be a valid UUID'),
     body('price').optional().isFloat({ min: 0 }).withMessage('Price must be a non-negative number'),
-    body('category').optional().isIn(['plants', 'seeds', 'tools', 'other']).withMessage('Invalid category'),
+    body('category').optional().isIn(['plants', 'seeds', 'tools', 'planters', 'other']).withMessage('Invalid category'),
     body('stock').optional().isInt({ min: 0 }).withMessage('Stock must be a non-negative integer'),
   ],
   validate,
@@ -59,6 +80,18 @@ router.delete(
   [param('id').isUUID().withMessage('Product ID must be a valid UUID')],
   validate,
   deleteProduct
+);
+
+router.put(
+  '/:id/featured',
+  protect,
+  adminOnly,
+  [
+    param('id').isUUID().withMessage('Product ID must be a valid UUID'),
+    body('is_featured').isBoolean().withMessage('is_featured must be a boolean'),
+  ],
+  validate,
+  setFeaturedProduct
 );
 
 module.exports = router;

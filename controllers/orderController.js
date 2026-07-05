@@ -28,7 +28,11 @@ const createOrder = async (req, res, next) => {
 
     const totalPrice = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-    const order = await orderModel.createOrder(req.user.id, totalPrice.toFixed(2), items);
+    const order = await orderModel.createOrder(req.user.id, totalPrice.toFixed(2), items, {
+      shipping_address: req.body.shipping_address || {},
+      payment_status: req.body.payment_status || 'pending',
+      payment_provider: req.body.payment_provider || 'manual',
+    });
 
     // Clear cart after successful order
     await cartModel.clearCart(req.user.id);

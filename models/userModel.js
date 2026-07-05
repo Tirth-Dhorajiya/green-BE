@@ -15,4 +15,13 @@ const findById = (id) =>
 const countUsers = () =>
   db.query('SELECT COUNT(*) FROM users');
 
-module.exports = { findByEmail, createUser, findById, countUsers };
+const getAllUsers = ({ limit, offset }) =>
+  db.query(
+    `SELECT id, name, email, role, created_at, COUNT(*) OVER() AS total_count
+     FROM users
+     ORDER BY created_at DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+
+module.exports = { findByEmail, createUser, findById, countUsers, getAllUsers };
