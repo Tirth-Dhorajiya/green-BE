@@ -20,6 +20,10 @@ const wishlistRoutes = require('./routes/wishlistRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 
 const app = express();
+const allowedOrigins = (process.env.CLIENT_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // ─── Security & Rate Limiting ─────────────────────────────────────────────────
 const limiter = rateLimit({
@@ -37,7 +41,12 @@ const authLimiter = rateLimit({
 });
 
 // ─── Core Middleware ──────────────────────────────────────────────────────────
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || '*', credentials: true }));
+app.use(cors({
+  origin: allowedOrigins.length
+    ? (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin))
+    : '*',
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
