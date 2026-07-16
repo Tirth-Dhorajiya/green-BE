@@ -14,12 +14,50 @@ const findActiveByCode = (code) =>
     [normalizeCode(code)]
   );
 
-const getAll = () =>
-  db.query(
-    `SELECT *
+const getAll = ({ limit = 10, offset = 0, search, status, type, sortBy, order } = {}) => {
+  const conditions = [];
+  const values = [];
+  let idx = 1;
+
+  if (search) {
+    conditions.push(`(code ILIKE $${idx} OR description ILIKE $${idx})`);
+    values.push(`%${search}%`);
+    idx++;
+  }
+  if (status === 'active') {
+    conditions.push('is_active = true');
+  }
+  if (status === 'disabled') {
+    conditions.push('is_active = false');
+  }
+  if (type) {
+    conditions.push(`discount_type = $${idx++}`);
+    values.push(type);
+  }
+
+  const allowedSort = {
+    code: 'code',
+    discount_value: 'discount_value',
+    min_order_amount: 'min_order_amount',
+    used_count: 'used_count',
+    is_active: 'is_active',
+    expires_at: 'expires_at',
+    created_at: 'created_at',
+  };
+  const sortCol = allowedSort[sortBy] || 'created_at';
+  const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  values.push(limit, offset);
+  return db.query(
+    `SELECT *, COUNT(*) OVER() AS total_count
      FROM coupons
-     ORDER BY created_at DESC`
+     ${where}
+     ORDER BY ${sortCol} ${sortOrder} NULLS LAST
+     LIMIT $${idx++} OFFSET $${idx++}`,
+    values
   );
+};
 
 const create = ({ code, description, discount_type, discount_value, min_order_amount, max_discount_amount, expires_at, usage_limit, is_active }) =>
   db.query(

@@ -54,12 +54,20 @@ const createProductReview = async (req, res, next) => {
 // GET /api/admin/reviews
 const getAdminReviews = async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, status } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      search,
+      rating,
+      sortBy = 'created_at',
+      order = 'desc',
+    } = req.query;
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
     const offset = (pageNum - 1) * limitNum;
 
-    const { rows } = await reviewModel.getAllReviews({ limit: limitNum, offset, status });
+    const { rows } = await reviewModel.getAllReviews({ limit: limitNum, offset, status, search, rating, sortBy, order });
     const totalCount = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
     const reviews = rows.map(({ total_count, ...review }) => review);
 

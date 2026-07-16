@@ -79,13 +79,42 @@ const getOrdersByUser = (userId) =>
     [userId]
   );
 
-const getAllOrders = ({ limit, offset, status }) => {
+const getAllOrders = ({ limit, offset, status, search, paymentStatus, couponStatus, sortBy, order }) => {
   const values = [];
-  let conditions = '';
+  const conditions = [];
+  let idx = 1;
   if (status) {
+    conditions.push(`o.status = $${idx++}`);
     values.push(status);
-    conditions = `WHERE o.status = $${values.length}`;
   }
+  if (paymentStatus) {
+    conditions.push(`o.payment_status = $${idx++}`);
+    values.push(paymentStatus);
+  }
+  if (couponStatus === 'with') {
+    conditions.push(`o.coupon_code IS NOT NULL`);
+  }
+  if (couponStatus === 'without') {
+    conditions.push(`o.coupon_code IS NULL`);
+  }
+  if (search) {
+    conditions.push(`(o.id::text ILIKE $${idx} OR u.name ILIKE $${idx} OR u.email ILIKE $${idx} OR o.coupon_code ILIKE $${idx})`);
+    values.push(`%${search}%`);
+    idx++;
+  }
+
+  const allowedSort = {
+    created_at: 'o.created_at',
+    customer: 'u.name',
+    total_price: 'o.total_price',
+    payment_status: 'o.payment_status',
+    coupon_code: 'o.coupon_code',
+    status: 'o.status',
+  };
+  const sortCol = allowedSort[sortBy] || 'o.created_at';
+  const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
   values.push(limit, offset);
   return db.query(
     `SELECT o.*, u.name AS user_name, u.email AS user_email,
@@ -109,9 +138,9 @@ const getAllOrders = ({ limit, offset, status }) => {
        JOIN products p ON oi.product_id = p.id
        WHERE oi.order_id = o.id
      ) items ON true
-     ${conditions}
-     ORDER BY o.created_at DESC
-     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+     ${where}
+     ORDER BY ${sortCol} ${sortOrder}
+     LIMIT $${idx++} OFFSET $${idx++}`,
     values
   );
 };

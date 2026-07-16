@@ -25,15 +25,21 @@ const getAllProducts = ({ category, minPrice, maxPrice, search, featured, stockS
   if (featured === true || featured === 'true') {
     conditions.push(`is_featured = true`);
   }
+  if (featured === false || featured === 'false') {
+    conditions.push(`is_featured = false`);
+  }
   if (stockStatus === 'in_stock') {
     conditions.push('stock > 0');
+  }
+  if (stockStatus === 'low_stock') {
+    conditions.push('stock > 0 AND stock <= 5');
   }
   if (stockStatus === 'out_of_stock') {
     conditions.push('stock = 0');
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const allowedSort = ['price', 'name', 'created_at', 'stock', 'is_featured'];
+  const allowedSort = ['price', 'name', 'created_at', 'stock', 'is_featured', 'category'];
   const sortCol = allowedSort.includes(sortBy) ? sortBy : 'created_at';
   const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
 

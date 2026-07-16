@@ -26,13 +26,35 @@ const createReview = ({ productId, userId, orderId, rating, comment }) =>
     [productId, userId, orderId, rating, comment || null]
   );
 
-const getAllReviews = ({ limit, offset, status }) => {
+const getAllReviews = ({ limit, offset, status, search, rating, sortBy, order }) => {
   const values = [];
-  let where = '';
+  const conditions = [];
+  let idx = 1;
   if (status) {
+    conditions.push(`r.status = $${idx++}`);
     values.push(status);
-    where = `WHERE r.status = $${values.length}`;
   }
+  if (rating) {
+    conditions.push(`r.rating = $${idx++}`);
+    values.push(Number(rating));
+  }
+  if (search) {
+    conditions.push(`(p.name ILIKE $${idx} OR u.name ILIKE $${idx} OR u.email ILIKE $${idx} OR r.comment ILIKE $${idx})`);
+    values.push(`%${search}%`);
+    idx++;
+  }
+
+  const allowedSort = {
+    product: 'p.name',
+    customer: 'u.name',
+    rating: 'r.rating',
+    status: 'r.status',
+    created_at: 'r.created_at',
+  };
+  const sortCol = allowedSort[sortBy] || 'r.created_at';
+  const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
   values.push(limit, offset);
 
   return db.query(
@@ -42,8 +64,8 @@ const getAllReviews = ({ limit, offset, status }) => {
      JOIN products p ON p.id = r.product_id
      JOIN users u ON u.id = r.user_id
      ${where}
-     ORDER BY r.created_at DESC
-     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+     ORDER BY ${sortCol} ${sortOrder}
+     LIMIT $${idx++} OFFSET $${idx++}`,
     values
   );
 };

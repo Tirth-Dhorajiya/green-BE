@@ -35,10 +35,33 @@ const validateCoupon = async (req, res, next) => {
   }
 };
 
-const getAdminCoupons = async (_req, res, next) => {
+const getAdminCoupons = async (req, res, next) => {
   try {
-    const { rows } = await couponModel.getAll();
-    res.json({ success: true, coupons: rows });
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      status,
+      type,
+      sortBy = 'created_at',
+      order = 'desc',
+    } = req.query;
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
+    const offset = (pageNum - 1) * limitNum;
+
+    const { rows } = await couponModel.getAll({ limit: limitNum, offset, search, status, type, sortBy, order });
+    const totalCount = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
+    const coupons = rows.map(({ total_count, ...coupon }) => coupon);
+
+    res.json({
+      success: true,
+      page: pageNum,
+      limit: limitNum,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      coupons,
+    });
   } catch (err) {
     next(err);
   }

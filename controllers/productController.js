@@ -42,7 +42,7 @@ const getAllProducts = async (req, res, next) => {
     } = req.query;
 
     const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10)));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
     const offset = (pageNum - 1) * limitNum;
 
     const { rows } = await productModel.getAllProducts({

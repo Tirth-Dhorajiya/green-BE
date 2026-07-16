@@ -31,13 +31,40 @@ const updatePassword = (email, hashedPassword) =>
 const countUsers = () =>
   db.query('SELECT COUNT(*) FROM users');
 
-const getAllUsers = ({ limit, offset }) =>
-  db.query(
+const getAllUsers = ({ limit, offset, search, role, sortBy, order }) => {
+  const conditions = [];
+  const values = [];
+  let idx = 1;
+
+  if (search) {
+    conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx})`);
+    values.push(`%${search}%`);
+    idx++;
+  }
+  if (role) {
+    conditions.push(`role = $${idx++}`);
+    values.push(role);
+  }
+
+  const allowedSort = {
+    name: 'name',
+    email: 'email',
+    role: 'role',
+    created_at: 'created_at',
+  };
+  const sortCol = allowedSort[sortBy] || 'created_at';
+  const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  values.push(limit, offset);
+  return db.query(
     `SELECT id, name, email, role, created_at, COUNT(*) OVER() AS total_count
      FROM users
-     ORDER BY created_at DESC
-     LIMIT $1 OFFSET $2`,
-    [limit, offset]
+     ${where}
+     ORDER BY ${sortCol} ${sortOrder}
+     LIMIT $${idx++} OFFSET $${idx++}`,
+    values
   );
+};
 
 module.exports = { findByEmail, createUser, findById, updateProfile, updatePassword, countUsers, getAllUsers };
