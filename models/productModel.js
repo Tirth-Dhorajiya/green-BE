@@ -1,6 +1,6 @@
 const db = require('../config/db');
 
-const getAllProducts = ({ category, minPrice, maxPrice, search, featured, limit, offset, sortBy, order }) => {
+const getAllProducts = ({ category, minPrice, maxPrice, search, featured, stockStatus, limit, offset, sortBy, order }) => {
   const conditions = [];
   const values = [];
   let idx = 1;
@@ -24,6 +24,12 @@ const getAllProducts = ({ category, minPrice, maxPrice, search, featured, limit,
   }
   if (featured === true || featured === 'true') {
     conditions.push(`is_featured = true`);
+  }
+  if (stockStatus === 'in_stock') {
+    conditions.push('stock > 0');
+  }
+  if (stockStatus === 'out_of_stock') {
+    conditions.push('stock = 0');
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

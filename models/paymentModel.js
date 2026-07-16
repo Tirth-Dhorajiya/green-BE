@@ -1,11 +1,23 @@
 const db = require('../config/db');
 
-const createAttempt = ({ userId, razorpayOrderId, amount, currency, shippingAddress }) =>
+const createAttempt = ({ userId, razorpayOrderId, amount, subtotalAmount, discountAmount, couponCode, currency, shippingAddress }) =>
   db.query(
-    `INSERT INTO payment_attempts (user_id, razorpay_order_id, amount, currency, shipping_address)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO payment_attempts (
+       user_id, razorpay_order_id, amount, subtotal_amount,
+       discount_amount, coupon_code, currency, shipping_address
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
-    [userId, razorpayOrderId, amount, currency, JSON.stringify(shippingAddress || {})]
+    [
+      userId,
+      razorpayOrderId,
+      amount,
+      subtotalAmount || amount,
+      discountAmount || 0,
+      couponCode || null,
+      currency,
+      JSON.stringify(shippingAddress || {}),
+    ]
   );
 
 const findByRazorpayOrderId = (razorpayOrderId, userId) =>

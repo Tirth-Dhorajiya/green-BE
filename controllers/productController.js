@@ -37,7 +37,7 @@ const destroyCloudinaryImages = async (images = []) => {
 const getAllProducts = async (req, res, next) => {
   try {
     const {
-      category, minPrice, maxPrice, search, featured,
+      category, minPrice, maxPrice, search, featured, stockStatus,
       page = 1, limit = 10, sortBy = 'created_at', order = 'desc',
     } = req.query;
 
@@ -49,7 +49,7 @@ const getAllProducts = async (req, res, next) => {
       category,
       minPrice: minPrice !== undefined ? parseFloat(minPrice) : undefined,
       maxPrice: maxPrice !== undefined ? parseFloat(maxPrice) : undefined,
-      search, featured, limit: limitNum, offset, sortBy, order,
+      search, featured, stockStatus, limit: limitNum, offset, sortBy, order,
     });
 
     const totalCount = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;

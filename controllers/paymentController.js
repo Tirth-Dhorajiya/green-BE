@@ -3,6 +3,7 @@ const Razorpay = require('razorpay');
 const cartModel = require('../models/cartModel');
 const orderModel = require('../models/orderModel');
 const paymentModel = require('../models/paymentModel');
+const couponModel = require('../models/couponModel');
 
 const getRazorpay = () => {
   if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
@@ -35,15 +36,44 @@ const getCartTotal = async (userId) => {
   return { cartItems, total: parseFloat(total.toFixed(2)) };
 };
 
+const applyCoupon = async (code, subtotal) => {
+  if (!code) {
+    return { coupon: null, discount: 0, total: subtotal };
+  }
+
+  const { rows } = await couponModel.findActiveByCode(code);
+  if (!rows.length) {
+    const error = new Error('Coupon is invalid or expired');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const coupon = rows[0];
+  const discount = couponModel.calculateDiscount(coupon, subtotal);
+  if (discount <= 0) {
+    const error = new Error(`Minimum order amount is ${Number(coupon.min_order_amount).toFixed(2)}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    coupon,
+    discount,
+    total: Number((subtotal - discount).toFixed(2)),
+  };
+};
+
 // POST /api/payments/razorpay/order
 const createRazorpayOrder = async (req, res, next) => {
   try {
-    const { shipping_address } = req.body;
+    const { shipping_address, coupon_code } = req.body;
     if (!shipping_address || !shipping_address.address || !shipping_address.city || !shipping_address.postalCode) {
       return res.status(400).json({ success: false, message: 'Complete shipping address is required' });
     }
 
-    const { total } = await getCartTotal(req.user.id);
+    const { total: subtotal } = await getCartTotal(req.user.id);
+    const discountResult = await applyCoupon(coupon_code, subtotal);
+    const total = discountResult.total;
     const currency = process.env.RAZORPAY_CURRENCY || 'INR';
     const razorpay = getRazorpay();
     const razorpayOrder = await razorpay.orders.create({
@@ -56,6 +86,9 @@ const createRazorpayOrder = async (req, res, next) => {
       userId: req.user.id,
       razorpayOrderId: razorpayOrder.id,
       amount: total,
+      subtotalAmount: subtotal,
+      discountAmount: discountResult.discount,
+      couponCode: discountResult.coupon?.code,
       currency,
       shippingAddress: shipping_address,
     });
@@ -66,6 +99,10 @@ const createRazorpayOrder = async (req, res, next) => {
         id: razorpayOrder.id,
         amount: razorpayOrder.amount,
         currency: razorpayOrder.currency,
+        subtotal,
+        discount: discountResult.discount,
+        total,
+        coupon_code: discountResult.coupon?.code || null,
       },
       key: process.env.RAZORPAY_KEY_ID,
     });
@@ -108,23 +145,33 @@ const verifyRazorpayPayment = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid payment signature' });
     }
 
-    const { cartItems, total } = await getCartTotal(req.user.id);
+    const { cartItems, total: currentSubtotal } = await getCartTotal(req.user.id);
+    if (Number(attempt.subtotal_amount || attempt.amount) !== currentSubtotal) {
+      await paymentModel.markFailed({ id: attempt.id, razorpayPaymentId: razorpay_payment_id });
+      return res.status(409).json({ success: false, message: 'Cart total changed. Please restart checkout.' });
+    }
     const items = cartItems.map((item) => ({
       product_id: item.product_id,
       quantity: item.quantity,
       price: parseFloat(item.price),
     }));
 
-    const order = await orderModel.createOrder(req.user.id, total.toFixed(2), items, {
+    const order = await orderModel.createOrder(req.user.id, Number(attempt.amount).toFixed(2), items, {
       shipping_address: attempt.shipping_address,
       payment_status: 'paid',
       payment_provider: 'razorpay',
       payment_reference: razorpay_payment_id,
       razorpay_order_id,
       razorpay_payment_id,
+      subtotal_price: Number(attempt.subtotal_amount || attempt.amount).toFixed(2),
+      discount_amount: Number(attempt.discount_amount || 0).toFixed(2),
+      coupon_code: attempt.coupon_code,
     });
 
     await paymentModel.markPaid({ id: attempt.id, razorpayPaymentId: razorpay_payment_id, createdOrderId: order.id });
+    if (attempt.coupon_code) {
+      await couponModel.incrementUsage(attempt.coupon_code);
+    }
     await cartModel.clearCart(req.user.id);
 
     res.status(201).json({ success: true, message: 'Payment verified and order placed', order });

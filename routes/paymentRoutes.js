@@ -15,6 +15,7 @@ router.post(
     body('shipping_address.address').trim().notEmpty().withMessage('Shipping address is required'),
     body('shipping_address.city').trim().notEmpty().withMessage('City is required'),
     body('shipping_address.postalCode').trim().notEmpty().withMessage('Postal code is required'),
+    body('coupon_code').optional().trim(),
   ],
   validate,
   createRazorpayOrder

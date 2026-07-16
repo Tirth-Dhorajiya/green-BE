@@ -13,7 +13,19 @@ CREATE TABLE IF NOT EXISTS users (
   email       VARCHAR(150)        UNIQUE NOT NULL,
   password    VARCHAR(255)        NOT NULL,
   role        VARCHAR(10)         NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+  address     JSONB               NOT NULL DEFAULT '{}'::jsonb,
+  email_verified BOOLEAN          NOT NULL DEFAULT false,
   created_at  TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS email_otps (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email        VARCHAR(150)        NOT NULL,
+  purpose      VARCHAR(30)         NOT NULL CHECK (purpose IN ('register', 'password_reset')),
+  otp_hash     VARCHAR(255)        NOT NULL,
+  expires_at   TIMESTAMP           NOT NULL,
+  consumed_at  TIMESTAMP,
+  created_at   TIMESTAMP           NOT NULL DEFAULT NOW()
 );
 
 -- =============================================
@@ -41,6 +53,9 @@ CREATE TABLE IF NOT EXISTS orders (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id              UUID                 NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   total_price          NUMERIC(10, 2)       NOT NULL CHECK (total_price >= 0),
+  subtotal_price       NUMERIC(10, 2)       NOT NULL DEFAULT 0 CHECK (subtotal_price >= 0),
+  discount_amount      NUMERIC(10, 2)       NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
+  coupon_code          VARCHAR(50),
   status               VARCHAR(20)          NOT NULL DEFAULT 'pending'
                          CHECK (status IN ('pending', 'processing', 'shipped', 'delivered', 'cancelled')),
   shipping_address     JSONB                NOT NULL DEFAULT '{}'::jsonb,
@@ -77,6 +92,34 @@ CREATE TABLE IF NOT EXISTS cart (
   UNIQUE(user_id, product_id)
 );
 
+CREATE TABLE IF NOT EXISTS wishlist (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID                 NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  product_id  UUID                 NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  created_at  TIMESTAMP            NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, product_id)
+);
+
+-- =============================================
+-- COUPONS
+-- =============================================
+CREATE TABLE IF NOT EXISTS coupons (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code                 VARCHAR(50)          UNIQUE NOT NULL,
+  description          TEXT,
+  discount_type        VARCHAR(10)          NOT NULL CHECK (discount_type IN ('percent', 'fixed')),
+  discount_value       NUMERIC(10, 2)       NOT NULL CHECK (discount_value > 0),
+  min_order_amount     NUMERIC(10, 2)       NOT NULL DEFAULT 0 CHECK (min_order_amount >= 0),
+  max_discount_amount  NUMERIC(10, 2)       CHECK (max_discount_amount IS NULL OR max_discount_amount >= 0),
+  starts_at            TIMESTAMP,
+  expires_at           TIMESTAMP,
+  usage_limit          INTEGER             CHECK (usage_limit IS NULL OR usage_limit > 0),
+  used_count           INTEGER             NOT NULL DEFAULT 0 CHECK (used_count >= 0),
+  is_active            BOOLEAN             NOT NULL DEFAULT true,
+  created_at           TIMESTAMP           NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
 -- =============================================
 -- PAYMENT ATTEMPTS
 -- =============================================
@@ -86,6 +129,9 @@ CREATE TABLE IF NOT EXISTS payment_attempts (
   razorpay_order_id    VARCHAR(150)         UNIQUE NOT NULL,
   razorpay_payment_id  VARCHAR(150),
   amount               NUMERIC(10, 2)       NOT NULL CHECK (amount >= 0),
+  subtotal_amount      NUMERIC(10, 2)       NOT NULL DEFAULT 0 CHECK (subtotal_amount >= 0),
+  discount_amount      NUMERIC(10, 2)       NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
+  coupon_code          VARCHAR(50),
   currency             VARCHAR(10)          NOT NULL DEFAULT 'INR',
   status               VARCHAR(20)          NOT NULL DEFAULT 'created'
                          CHECK (status IN ('created', 'paid', 'failed')),
@@ -120,6 +166,9 @@ CREATE INDEX IF NOT EXISTS idx_products_featured    ON products(is_featured);
 CREATE INDEX IF NOT EXISTS idx_orders_user_id       ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_cart_user_id         ON cart(user_id);
+CREATE INDEX IF NOT EXISTS idx_email_otps_email     ON email_otps(email);
+CREATE INDEX IF NOT EXISTS idx_wishlist_user_id     ON wishlist(user_id);
+CREATE INDEX IF NOT EXISTS idx_coupons_code         ON coupons(code);
 CREATE INDEX IF NOT EXISTS idx_reviews_product_id   ON reviews(product_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_user_id      ON reviews(user_id);
 
@@ -132,3 +181,7 @@ VALUES ('Admin', 'admin@greenstore.com',
         '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
         'admin')
 ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO coupons (code, description, discount_type, discount_value, min_order_amount, max_discount_amount)
+VALUES ('GREEN10', '10% off orders over 500', 'percent', 10, 500, 250)
+ON CONFLICT (code) DO NOTHING;

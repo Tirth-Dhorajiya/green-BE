@@ -15,6 +15,9 @@ const cartRoutes = require('./routes/cartRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+const wishlistRoutes = require('./routes/wishlistRoutes');
+const contactRoutes = require('./routes/contactRoutes');
 
 const app = express();
 
@@ -58,6 +61,9 @@ app.use('/api/products', productRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/coupons', couponRoutes);
+app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/contact', [limiter], contactRoutes);
 app.use('/api/admin', adminRoutes);
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
