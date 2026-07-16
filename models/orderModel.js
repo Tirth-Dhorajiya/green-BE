@@ -79,6 +79,32 @@ const getOrdersByUser = (userId) =>
     [userId]
   );
 
+const getCustomerOrdersForAdmin = (userId) =>
+  db.query(
+    `SELECT o.*,
+            COALESCE(items.items, '[]'::json) AS items
+     FROM orders o
+     LEFT JOIN LATERAL (
+       SELECT json_agg(
+         json_build_object(
+           'id', oi.id,
+           'product_id', oi.product_id,
+           'quantity', oi.quantity,
+           'price', oi.price,
+           'product_name', p.name,
+           'image_url', COALESCE(p.thumbnail_url, p.image_url)
+         )
+         ORDER BY p.name
+       ) AS items
+       FROM order_items oi
+       JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = o.id
+     ) items ON true
+     WHERE o.user_id = $1
+     ORDER BY o.created_at DESC`,
+    [userId]
+  );
+
 const getAllOrders = ({ limit, offset, status, search, paymentStatus, couponStatus, sortBy, order }) => {
   const values = [];
   const conditions = [];
@@ -191,4 +217,4 @@ const hasDeliveredProduct = (userId, productId) =>
     [userId, productId]
   );
 
-module.exports = { createOrder, getOrdersByUser, getAllOrders, getOrderById, updateStatus, sumRevenue, countOrders, hasDeliveredProduct };
+module.exports = { createOrder, getOrdersByUser, getCustomerOrdersForAdmin, getAllOrders, getOrderById, updateStatus, sumRevenue, countOrders, hasDeliveredProduct };

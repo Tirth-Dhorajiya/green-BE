@@ -51,4 +51,51 @@ const getCustomers = async (req, res, next) => {
   }
 };
 
-module.exports = { getDashboardStats, getCustomers };
+// GET /api/admin/customers/:id
+const getCustomerDetails = async (req, res, next) => {
+  try {
+    const [{ rows: customerRows }, { rows: orders }] = await Promise.all([
+      userModel.findById(req.params.id),
+      orderModel.getCustomerOrdersForAdmin(req.params.id),
+    ]);
+
+    if (!customerRows.length) {
+      return res.status(404).json({ success: false, message: 'Customer not found' });
+    }
+
+    const summary = orders.reduce(
+      (acc, order) => {
+        const total = Number(order.total_price || 0);
+        const discount = Number(order.discount_amount || 0);
+
+        acc.totalOrders += 1;
+        acc.totalSpent += order.status === 'cancelled' ? 0 : total;
+        acc.totalDiscount += discount;
+        acc.deliveredOrders += order.status === 'delivered' ? 1 : 0;
+        acc.paidOrders += order.payment_status === 'paid' ? 1 : 0;
+        return acc;
+      },
+      {
+        totalOrders: 0,
+        totalSpent: 0,
+        totalDiscount: 0,
+        deliveredOrders: 0,
+        paidOrders: 0,
+      }
+    );
+
+    res.json({
+      success: true,
+      customer: customerRows[0],
+      summary: {
+        ...summary,
+        lastOrderAt: orders[0]?.created_at || null,
+      },
+      orders,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getDashboardStats, getCustomers, getCustomerDetails };

@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, param } = require('express-validator');
-const { getDashboardStats, getCustomers } = require('../controllers/adminController');
+const { getDashboardStats, getCustomers, getCustomerDetails } = require('../controllers/adminController');
 const { getAllOrders, updateOrderStatus } = require('../controllers/orderController');
 const { getAdminReviews, updateReviewStatus } = require('../controllers/reviewController');
 const { getAdminCoupons, createAdminCoupon, updateAdminCoupon } = require('../controllers/couponController');
@@ -14,6 +14,7 @@ router.use(protect, adminOnly); // all admin routes guarded
 router.get('/stats', getDashboardStats);
 router.get('/orders', getAllOrders);
 router.get('/customers', getCustomers);
+router.get('/customers/:id', [param('id').isUUID().withMessage('Customer ID must be a valid UUID')], validate, getCustomerDetails);
 router.get('/reviews', getAdminReviews);
 router.get('/coupons', getAdminCoupons);
 router.post(
