@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param } = require('express-validator');
 const { getDashboardStats, getCustomers, getCustomerDetails } = require('../controllers/adminController');
-const { getAllOrders, updateOrderStatus } = require('../controllers/orderController');
+const { getAllOrders, updateOrderStatus, refundOrder } = require('../controllers/orderController');
 const { getAdminReviews, updateReviewStatus } = require('../controllers/reviewController');
 const { getAdminCoupons, createAdminCoupon, updateAdminCoupon } = require('../controllers/couponController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
@@ -54,9 +54,24 @@ router.put(
     body('status')
       .isIn(['pending', 'processing', 'shipped', 'delivered', 'cancelled'])
       .withMessage('Invalid status value'),
+    body('courier_name').optional({ nullable: true, checkFalsy: true }).trim(),
+    body('tracking_number').optional({ nullable: true, checkFalsy: true }).trim(),
+    body('estimated_delivery_date').optional({ nullable: true, checkFalsy: true }).isISO8601().withMessage('Estimated delivery date must be valid'),
+    body('admin_notes').optional({ nullable: true, checkFalsy: true }).trim(),
+    body('note').optional({ nullable: true, checkFalsy: true }).trim(),
   ],
   validate,
   updateOrderStatus
+);
+
+router.put(
+  '/orders/:id/refund',
+  [
+    param('id').isUUID().withMessage('Order ID must be a valid UUID'),
+    body('note').optional({ nullable: true, checkFalsy: true }).trim(),
+  ],
+  validate,
+  refundOrder
 );
 
 router.put(

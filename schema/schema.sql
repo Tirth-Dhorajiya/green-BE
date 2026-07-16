@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS orders (
   payment_reference    VARCHAR(150),
   razorpay_order_id    VARCHAR(150),
   razorpay_payment_id  VARCHAR(150),
+  courier_name         VARCHAR(120),
+  tracking_number      VARCHAR(160),
+  estimated_delivery_date DATE,
+  admin_notes          TEXT,
   created_at           TIMESTAMP            NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMP            NOT NULL DEFAULT NOW()
 );
@@ -158,13 +162,25 @@ CREATE TABLE IF NOT EXISTS reviews (
   UNIQUE(product_id, user_id, order_id)
 );
 
+CREATE TABLE IF NOT EXISTS order_status_history (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id    UUID                 NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  from_status VARCHAR(20),
+  to_status   VARCHAR(20)          NOT NULL CHECK (to_status IN ('pending', 'processing', 'shipped', 'delivered', 'cancelled')),
+  changed_by  UUID                 REFERENCES users(id) ON DELETE SET NULL,
+  note        TEXT,
+  created_at  TIMESTAMP            NOT NULL DEFAULT NOW()
+);
+
 -- =============================================
 -- INDEXES
 -- =============================================
 CREATE INDEX IF NOT EXISTS idx_products_category    ON products(category);
 CREATE INDEX IF NOT EXISTS idx_products_featured    ON products(is_featured);
 CREATE INDEX IF NOT EXISTS idx_orders_user_id       ON orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_tracking_number ON orders(tracking_number);
 CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_status_history_order_id ON order_status_history(order_id);
 CREATE INDEX IF NOT EXISTS idx_cart_user_id         ON cart(user_id);
 CREATE INDEX IF NOT EXISTS idx_email_otps_email     ON email_otps(email);
 CREATE INDEX IF NOT EXISTS idx_wishlist_user_id     ON wishlist(user_id);

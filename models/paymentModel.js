@@ -26,8 +26,23 @@ const findByRazorpayOrderId = (razorpayOrderId, userId) =>
     [razorpayOrderId, userId]
   );
 
+const findByRazorpayOrderIdForUpdate = (client, razorpayOrderId, userId) =>
+  client.query(
+    `SELECT * FROM payment_attempts WHERE razorpay_order_id = $1 AND user_id = $2 FOR UPDATE`,
+    [razorpayOrderId, userId]
+  );
+
 const markPaid = ({ id, razorpayPaymentId, createdOrderId }) =>
   db.query(
+    `UPDATE payment_attempts
+     SET status = 'paid', razorpay_payment_id = $1, created_order_id = $2, updated_at = NOW()
+     WHERE id = $3
+     RETURNING *`,
+    [razorpayPaymentId, createdOrderId, id]
+  );
+
+const markPaidWithClient = (client, { id, razorpayPaymentId, createdOrderId }) =>
+  client.query(
     `UPDATE payment_attempts
      SET status = 'paid', razorpay_payment_id = $1, created_order_id = $2, updated_at = NOW()
      WHERE id = $3
@@ -44,4 +59,4 @@ const markFailed = ({ id, razorpayPaymentId }) =>
     [razorpayPaymentId || null, id]
   );
 
-module.exports = { createAttempt, findByRazorpayOrderId, markPaid, markFailed };
+module.exports = { createAttempt, findByRazorpayOrderId, findByRazorpayOrderIdForUpdate, markPaid, markPaidWithClient, markFailed };

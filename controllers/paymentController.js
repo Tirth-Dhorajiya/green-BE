@@ -1,9 +1,11 @@
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
+const db = require('../config/db');
 const cartModel = require('../models/cartModel');
 const orderModel = require('../models/orderModel');
 const paymentModel = require('../models/paymentModel');
 const couponModel = require('../models/couponModel');
+const { sendOrderEmail } = require('../services/emailService');
 
 const getRazorpay = () => {
   if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
@@ -67,7 +69,7 @@ const applyCoupon = async (code, subtotal) => {
 const createRazorpayOrder = async (req, res, next) => {
   try {
     const { shipping_address, coupon_code } = req.body;
-    if (!shipping_address || !shipping_address.address || !shipping_address.city || !shipping_address.postalCode) {
+    if (!shipping_address || !shipping_address.phone || !shipping_address.address || !shipping_address.city || !shipping_address.postalCode) {
       return res.status(400).json({ success: false, message: 'Complete shipping address is required' });
     }
 
@@ -145,34 +147,72 @@ const verifyRazorpayPayment = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid payment signature' });
     }
 
-    const { cartItems, total: currentSubtotal } = await getCartTotal(req.user.id);
-    if (Number(attempt.subtotal_amount || attempt.amount) !== currentSubtotal) {
-      await paymentModel.markFailed({ id: attempt.id, razorpayPaymentId: razorpay_payment_id });
-      return res.status(409).json({ success: false, message: 'Cart total changed. Please restart checkout.' });
-    }
-    const items = cartItems.map((item) => ({
-      product_id: item.product_id,
-      quantity: item.quantity,
-      price: parseFloat(item.price),
-    }));
+    const client = await db.pool.connect();
+    let orderId;
+    try {
+      await client.query('BEGIN');
+      const { rows: lockedAttempts } = await paymentModel.findByRazorpayOrderIdForUpdate(client, razorpay_order_id, req.user.id);
+      if (!lockedAttempts.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ success: false, message: 'Payment attempt not found' });
+      }
 
-    const order = await orderModel.createOrder(req.user.id, Number(attempt.amount).toFixed(2), items, {
-      shipping_address: attempt.shipping_address,
-      payment_status: 'paid',
-      payment_provider: 'razorpay',
-      payment_reference: razorpay_payment_id,
-      razorpay_order_id,
-      razorpay_payment_id,
-      subtotal_price: Number(attempt.subtotal_amount || attempt.amount).toFixed(2),
-      discount_amount: Number(attempt.discount_amount || 0).toFixed(2),
-      coupon_code: attempt.coupon_code,
+      const lockedAttempt = lockedAttempts[0];
+      if (lockedAttempt.status === 'paid' && lockedAttempt.created_order_id) {
+        orderId = lockedAttempt.created_order_id;
+        await client.query('COMMIT');
+      } else {
+        const { cartItems, total: currentSubtotal } = await getCartTotal(req.user.id);
+        if (Number(lockedAttempt.subtotal_amount || lockedAttempt.amount) !== currentSubtotal) {
+          await client.query(
+            `UPDATE payment_attempts
+             SET status = 'failed', razorpay_payment_id = $1, updated_at = NOW()
+             WHERE id = $2`,
+            [razorpay_payment_id, lockedAttempt.id]
+          );
+          await client.query('COMMIT');
+          return res.status(409).json({ success: false, message: 'Cart total changed. Please restart checkout.' });
+        }
+
+        const items = cartItems.map((item) => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          price: parseFloat(item.price),
+        }));
+
+        const order = await orderModel.createOrderWithClient(client, req.user.id, Number(lockedAttempt.amount).toFixed(2), items, {
+          shipping_address: lockedAttempt.shipping_address,
+          payment_status: 'paid',
+          payment_provider: 'razorpay',
+          payment_reference: razorpay_payment_id,
+          razorpay_order_id,
+          razorpay_payment_id,
+          subtotal_price: Number(lockedAttempt.subtotal_amount || lockedAttempt.amount).toFixed(2),
+          discount_amount: Number(lockedAttempt.discount_amount || 0).toFixed(2),
+          coupon_code: lockedAttempt.coupon_code,
+          note: 'Payment verified',
+        });
+
+        await paymentModel.markPaidWithClient(client, { id: lockedAttempt.id, razorpayPaymentId: razorpay_payment_id, createdOrderId: order.id });
+        if (lockedAttempt.coupon_code) {
+          await client.query('UPDATE coupons SET used_count = used_count + 1, updated_at = NOW() WHERE code = $1', [lockedAttempt.coupon_code]);
+        }
+        await client.query('DELETE FROM cart WHERE user_id = $1', [req.user.id]);
+        orderId = order.id;
+        await client.query('COMMIT');
+      }
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    const { rows } = await orderModel.getOrderById(orderId);
+    const order = rows[0];
+    sendOrderEmail({ to: order.user_email, order, type: 'placed' }).catch((emailErr) => {
+      console.error('Order email failed', emailErr);
     });
-
-    await paymentModel.markPaid({ id: attempt.id, razorpayPaymentId: razorpay_payment_id, createdOrderId: order.id });
-    if (attempt.coupon_code) {
-      await couponModel.incrementUsage(attempt.coupon_code);
-    }
-    await cartModel.clearCart(req.user.id);
 
     res.status(201).json({ success: true, message: 'Payment verified and order placed', order });
   } catch (err) {

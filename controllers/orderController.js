@@ -1,5 +1,13 @@
 const orderModel = require('../models/orderModel');
 const cartModel = require('../models/cartModel');
+const { sendOrderEmail } = require('../services/emailService');
+
+const notifyOrder = (order, type, note) => {
+  if (!order?.user_email) return;
+  sendOrderEmail({ to: order.user_email, order, type, note }).catch((err) => {
+    console.error('Order notification failed', err);
+  });
+};
 
 // POST /api/orders  — create order from cart
 const createOrder = async (req, res, next) => {
@@ -37,6 +45,9 @@ const createOrder = async (req, res, next) => {
     // Clear cart after successful order
     await cartModel.clearCart(req.user.id);
 
+    const { rows } = await orderModel.getOrderById(order.id);
+    notifyOrder(rows[0], 'placed');
+
     res.status(201).json({ success: true, message: 'Order placed successfully', order });
   } catch (err) {
     next(err);
@@ -48,6 +59,19 @@ const getUserOrders = async (req, res, next) => {
   try {
     const { rows } = await orderModel.getOrdersByUser(req.user.id);
     res.json({ success: true, orders: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/orders/:id
+const getOrderDetails = async (req, res, next) => {
+  try {
+    const { rows } = await orderModel.getOrderById(req.params.id);
+    if (!rows.length || (rows[0].user_id !== req.user.id && req.user.role !== 'admin')) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    res.json({ success: true, order: rows[0] });
   } catch (err) {
     next(err);
   }
@@ -101,7 +125,14 @@ const getAllOrders = async (req, res, next) => {
 const updateOrderStatus = async (req, res, next) => {
   try {
     const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
-    const { status } = req.body;
+    const {
+      status,
+      note,
+      courier_name,
+      tracking_number,
+      estimated_delivery_date,
+      admin_notes,
+    } = req.body;
 
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
@@ -110,15 +141,91 @@ const updateOrderStatus = async (req, res, next) => {
       });
     }
 
-    const { rows } = await orderModel.updateStatus(req.params.id, status);
+    const { rows } = await orderModel.updateStatus(req.params.id, {
+      status,
+      changedBy: req.user.id,
+      note,
+      fulfillment: {
+        courier_name,
+        tracking_number,
+        estimated_delivery_date,
+        admin_notes,
+      },
+    });
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    res.json({ success: true, message: 'Order status updated', order: rows[0] });
+    const { rows: detailRows } = await orderModel.getOrderById(req.params.id);
+    const order = detailRows[0] || rows[0];
+    notifyOrder(order, tracking_number || courier_name ? 'tracking' : status === 'cancelled' ? 'cancelled' : 'status', note);
+
+    res.json({ success: true, message: 'Order status updated', order });
   } catch (err) {
     next(err);
   }
 };
 
-module.exports = { createOrder, getUserOrders, getAllOrders, updateOrderStatus };
+// PUT /api/orders/:id/cancel
+const cancelUserOrder = async (req, res, next) => {
+  try {
+    const { rows } = await orderModel.getOrderById(req.params.id);
+    if (!rows.length || rows[0].user_id !== req.user.id) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const order = rows[0];
+    if (!['pending', 'processing'].includes(order.status)) {
+      return res.status(400).json({ success: false, message: 'Only pending or processing orders can be cancelled' });
+    }
+
+    const { rows: updatedRows } = await orderModel.updateStatus(req.params.id, {
+      status: 'cancelled',
+      changedBy: req.user.id,
+      note: req.body.note || 'Cancelled by customer',
+    });
+
+    const { rows: detailRows } = await orderModel.getOrderById(req.params.id);
+    const updatedOrder = detailRows[0] || updatedRows[0];
+    notifyOrder(updatedOrder, 'cancelled', 'Cancelled by customer');
+
+    res.json({
+      success: true,
+      message: updatedOrder.payment_status === 'paid'
+        ? 'Order cancelled. Refund must be processed by admin.'
+        : 'Order cancelled',
+      order: updatedOrder,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PUT /api/orders/:id/refund (admin)
+const refundOrder = async (req, res, next) => {
+  try {
+    const { rows } = await orderModel.getOrderById(req.params.id);
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const order = rows[0];
+    if (order.status !== 'cancelled') {
+      return res.status(400).json({ success: false, message: 'Only cancelled orders can be marked refunded' });
+    }
+    if (order.payment_status !== 'paid') {
+      return res.status(400).json({ success: false, message: 'Only paid orders can be marked refunded' });
+    }
+
+    await orderModel.updatePaymentStatus(req.params.id, 'refunded');
+    const { rows: detailRows } = await orderModel.getOrderById(req.params.id);
+    const updatedOrder = detailRows[0];
+    notifyOrder(updatedOrder, 'refunded', req.body.note || 'Refund processed by admin');
+
+    res.json({ success: true, message: 'Order marked as refunded', order: updatedOrder });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { createOrder, getUserOrders, getOrderDetails, getAllOrders, updateOrderStatus, cancelUserOrder, refundOrder };
