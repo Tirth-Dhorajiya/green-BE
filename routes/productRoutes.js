@@ -10,8 +10,13 @@ const {
 } = require('../controllers/productController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validate');
-const { uploadCloud } = require('../config/cloudinary');
-const { getProductReviews, createProductReview } = require('../controllers/reviewController');
+const { uploadCloud, uploadReviewCloud } = require('../config/cloudinary');
+const {
+  getProductReviews,
+  getReviewEligibility,
+  requireReviewEligibility,
+  createProductReview,
+} = require('../controllers/reviewController');
 
 const router = express.Router();
 
@@ -24,15 +29,21 @@ router.get(
   getProductReviews
 );
 
+router.get(
+  '/:id/reviews/eligibility',
+  protect,
+  [param('id').isUUID().withMessage('Product ID must be a valid UUID')],
+  validate,
+  getReviewEligibility
+);
+
 router.post(
   '/:id/reviews',
   protect,
-  [
-    param('id').isUUID().withMessage('Product ID must be a valid UUID'),
-    body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
-    body('comment').optional().trim().isLength({ max: 1000 }).withMessage('Comment must be 1000 characters or less'),
-  ],
+  [param('id').isUUID().withMessage('Product ID must be a valid UUID')],
   validate,
+  requireReviewEligibility,
+  uploadReviewCloud.array('images', 5),
   createProductReview
 );
 
@@ -50,9 +61,13 @@ router.post(
   uploadCloud.array('images', 10),
   [
     body('name').trim().notEmpty().withMessage('Product name is required'),
+    body('description').optional({ nullable: true }).isLength({ max: 20000 }).withMessage('Product description must be 20000 characters or less'),
     body('price').isFloat({ min: 0 }).withMessage('Price must be a non-negative number'),
     body('category').isIn(['plants', 'seeds', 'tools', 'planters', 'other']).withMessage('Category must be plants, seeds, tools, planters, or other'),
     body('stock').optional().isInt({ min: 0 }).withMessage('Stock must be a non-negative integer'),
+    body('return_policy').optional().isIn(['returnable', 'damage_only']).withMessage('Return policy is invalid'),
+    body('return_window_hours').optional().isInt({ min: 1, max: 8760 }).withMessage('Return window is invalid'),
+    body('final_sale').optional().isBoolean().withMessage('Final sale must be true or false'),
   ],
   validate,
   addProduct
@@ -65,9 +80,13 @@ router.put(
   uploadCloud.array('images', 10),
   [
     param('id').isUUID().withMessage('Product ID must be a valid UUID'),
+    body('description').optional({ nullable: true }).isLength({ max: 20000 }).withMessage('Product description must be 20000 characters or less'),
     body('price').optional().isFloat({ min: 0 }).withMessage('Price must be a non-negative number'),
     body('category').optional().isIn(['plants', 'seeds', 'tools', 'planters', 'other']).withMessage('Invalid category'),
     body('stock').optional().isInt({ min: 0 }).withMessage('Stock must be a non-negative integer'),
+    body('return_policy').optional().isIn(['returnable', 'damage_only']).withMessage('Return policy is invalid'),
+    body('return_window_hours').optional().isInt({ min: 1, max: 8760 }).withMessage('Return window is invalid'),
+    body('final_sale').optional().isBoolean().withMessage('Final sale must be true or false'),
   ],
   validate,
   updateProduct

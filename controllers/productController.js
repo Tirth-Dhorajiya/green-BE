@@ -1,5 +1,7 @@
 const productModel = require('../models/productModel');
+const reviewModel = require('../models/reviewModel');
 const { cloudinary } = require('../config/cloudinary');
+const { sanitizeProductDescription } = require('../services/productDescriptionService');
 
 const parseBoolean = (value) => value === true || value === 'true' || value === '1';
 
@@ -53,7 +55,10 @@ const getAllProducts = async (req, res, next) => {
     });
 
     const totalCount = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
-    const products = rows.map(({ total_count, ...p }) => p);
+    const products = rows.map(({ total_count, ...p }) => ({
+      ...p,
+      description: sanitizeProductDescription(p.description),
+    }));
 
     res.json({ success: true, page: pageNum, limit: limitNum, totalCount, totalPages: Math.ceil(totalCount / limitNum), products });
   } catch (err) { next(err); }
@@ -64,14 +69,14 @@ const getProduct = async (req, res, next) => {
   try {
     const { rows } = await productModel.getById(req.params.id);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Product not found' });
-    res.json({ success: true, product: rows[0] });
+    res.json({ success: true, product: { ...rows[0], description: sanitizeProductDescription(rows[0].description) } });
   } catch (err) { next(err); }
 };
 
 // POST /api/products (admin)
 const addProduct = async (req, res, next) => {
   try {
-    const { name, description, price, category, stock, is_featured } = req.body;
+    const { name, description, price, category, stock, is_featured, return_policy, return_window_hours, final_sale } = req.body;
 
     // req.files is an array when using .array('images', 10)
     const uploadedFiles = req.files || (req.file ? [req.file] : []);
@@ -88,7 +93,7 @@ const addProduct = async (req, res, next) => {
 
     const { rows } = await productModel.createProduct({
       name,
-      description,
+      description: sanitizeProductDescription(description),
       price,
       category,
       stock: stock || 0,
@@ -96,6 +101,9 @@ const addProduct = async (req, res, next) => {
       thumbnail_url,
       images,
       is_featured: parseBoolean(is_featured),
+      return_policy: return_policy || (category === 'plants' ? 'damage_only' : 'returnable'),
+      return_window_hours: Number(return_window_hours || (category === 'plants' ? 48 : 168)),
+      final_sale: parseBoolean(final_sale),
     });
 
     res.status(201).json({ success: true, message: 'Product added', product: rows[0] });
@@ -108,11 +116,13 @@ const updateProduct = async (req, res, next) => {
     const { rows: existing } = await productModel.getById(req.params.id);
     if (!existing.length) return res.status(404).json({ success: false, message: 'Product not found' });
 
-    const updatable = ['name', 'description', 'price', 'category', 'stock', 'is_featured'];
+    const updatable = ['name', 'description', 'price', 'category', 'stock', 'is_featured', 'return_policy', 'return_window_hours', 'final_sale'];
     const fields = {};
     updatable.forEach((key) => {
       if (req.body[key] !== undefined) fields[key] = req.body[key];
     });
+    if (fields.final_sale !== undefined) fields.final_sale = parseBoolean(fields.final_sale);
+    if (fields.description !== undefined) fields.description = sanitizeProductDescription(fields.description);
 
     const uploadedFiles = req.files || (req.file ? [req.file] : []);
 
@@ -189,10 +199,14 @@ const deleteProduct = async (req, res, next) => {
   try {
     const { rows: existing } = await productModel.getById(req.params.id);
     if (!existing.length) return res.status(404).json({ success: false, message: 'Product not found' });
+    const { rows: reviewImages } = await reviewModel.getProductReviewImages(req.params.id);
 
     const { rows } = await productModel.deleteProduct(req.params.id);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Product not found' });
-    await destroyCloudinaryImages(normalizeImages(existing[0].images || []));
+    await destroyCloudinaryImages([
+      ...normalizeImages(existing[0].images || []),
+      ...reviewImages,
+    ]);
     res.json({ success: true, message: 'Product deleted' });
   } catch (err) { next(err); }
 };

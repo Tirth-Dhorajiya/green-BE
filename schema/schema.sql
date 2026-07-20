@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS products (
   thumbnail_url  VARCHAR(500),
   images         JSONB               NOT NULL DEFAULT '[]'::jsonb,
   is_featured    BOOLEAN             NOT NULL DEFAULT false,
+  return_policy  VARCHAR(30)         NOT NULL DEFAULT 'returnable',
+  return_window_hours INTEGER        NOT NULL DEFAULT 168,
+  final_sale     BOOLEAN             NOT NULL DEFAULT false,
   created_at     TIMESTAMP           NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMP           NOT NULL DEFAULT NOW()
 );
@@ -60,7 +63,7 @@ CREATE TABLE IF NOT EXISTS orders (
                          CHECK (status IN ('pending', 'processing', 'shipped', 'delivered', 'cancelled')),
   shipping_address     JSONB                NOT NULL DEFAULT '{}'::jsonb,
   payment_status       VARCHAR(20)          NOT NULL DEFAULT 'pending'
-                         CHECK (payment_status IN ('pending', 'paid', 'failed', 'refunded')),
+                         CHECK (payment_status IN ('pending', 'paid', 'failed', 'refund_pending', 'partially_refunded', 'refunded')),
   payment_provider     VARCHAR(30),
   payment_reference    VARCHAR(150),
   razorpay_order_id    VARCHAR(150),
@@ -69,6 +72,7 @@ CREATE TABLE IF NOT EXISTS orders (
   tracking_number      VARCHAR(160),
   estimated_delivery_date DATE,
   admin_notes          TEXT,
+  delivered_at         TIMESTAMPTZ,
   created_at           TIMESTAMP            NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMP            NOT NULL DEFAULT NOW()
 );
@@ -81,7 +85,13 @@ CREATE TABLE IF NOT EXISTS order_items (
   order_id     UUID                 NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   product_id   UUID                 NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
   quantity     INTEGER              NOT NULL CHECK (quantity > 0),
-  price        NUMERIC(10, 2)       NOT NULL CHECK (price >= 0)
+  price        NUMERIC(10, 2)       NOT NULL CHECK (price >= 0),
+  product_name_snapshot VARCHAR(255),
+  category_snapshot VARCHAR(50),
+  return_policy_snapshot VARCHAR(30),
+  return_window_hours_snapshot INTEGER,
+  final_sale_snapshot BOOLEAN NOT NULL DEFAULT FALSE,
+  net_unit_amount NUMERIC(12, 2)
 );
 
 -- =============================================
@@ -160,6 +170,18 @@ CREATE TABLE IF NOT EXISTS reviews (
   created_at  TIMESTAMP            NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMP            NOT NULL DEFAULT NOW(),
   UNIQUE(product_id, user_id, order_id)
+);
+
+CREATE TABLE IF NOT EXISTS review_images (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  review_id   UUID                 NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+  url         VARCHAR(1000)        NOT NULL,
+  public_id   VARCHAR(500)         NOT NULL,
+  sort_order  INTEGER              NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
+  status      VARCHAR(20)          NOT NULL DEFAULT 'visible' CHECK (status IN ('visible', 'hidden')),
+  created_at  TIMESTAMP            NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMP            NOT NULL DEFAULT NOW(),
+  UNIQUE(review_id, sort_order)
 );
 
 CREATE TABLE IF NOT EXISTS order_status_history (
@@ -264,6 +286,8 @@ CREATE INDEX IF NOT EXISTS idx_wishlist_user_id     ON wishlist(user_id);
 CREATE INDEX IF NOT EXISTS idx_coupons_code         ON coupons(code);
 CREATE INDEX IF NOT EXISTS idx_reviews_product_id   ON reviews(product_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_user_id      ON reviews(user_id);
+CREATE INDEX IF NOT EXISTS idx_review_images_review_id ON review_images(review_id);
+CREATE INDEX IF NOT EXISTS idx_review_images_status ON review_images(status);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_shipping_shipments_active_order ON shipping_shipments(order_id) WHERE status IN ('creating', 'manifested', 'in_transit', 'partial');
 CREATE INDEX IF NOT EXISTS idx_shipping_shipments_order_id ON shipping_shipments(order_id);
 CREATE INDEX IF NOT EXISTS idx_shipping_shipments_status ON shipping_shipments(status);

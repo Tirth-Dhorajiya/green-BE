@@ -14,11 +14,11 @@ if (process.env.CLOUDINARY_URL) {
   });
 }
 
-const storage = {
+const createStorage = (folder) => ({
   _handleFile(_req, file, cb) {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
-        folder: 'green-website',
+        folder,
         resource_type: 'image',
         transformation: [
           { width: 1200, height: 1200, crop: 'limit' },
@@ -48,12 +48,17 @@ const storage = {
       .then(() => cb(null))
       .catch(cb);
   },
-};
+});
+
+const storage = createStorage('green-website');
+const reviewStorage = createStorage('green-website/reviews');
 
 const fileFilter = (_req, file, cb) => {
   const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
   if (allowed.includes(file.mimetype)) return cb(null, true);
-  return cb(new Error('Only JPEG, PNG, WebP, and GIF images are allowed'), false);
+  const error = new Error('Only JPEG, PNG, WebP, and GIF images are allowed');
+  error.statusCode = 400;
+  return cb(error, false);
 };
 
 // Allow up to 10 images per product
@@ -66,4 +71,21 @@ const uploadCloud = multer({
   },
 });
 
-module.exports = { cloudinary, storage, uploadCloud };
+const reviewFileFilter = (_req, file, cb) => {
+  const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+  if (allowed.includes(file.mimetype)) return cb(null, true);
+  const error = new Error('Review photos must be JPEG, PNG, or WebP images');
+  error.statusCode = 400;
+  return cb(error, false);
+};
+
+const uploadReviewCloud = multer({
+  storage: reviewStorage,
+  fileFilter: reviewFileFilter,
+  limits: {
+    files: 5,
+    fileSize: 5 * 1024 * 1024,
+  },
+});
+
+module.exports = { cloudinary, storage, reviewStorage, uploadCloud, uploadReviewCloud };

@@ -58,12 +58,12 @@ const getAllProducts = ({ category, minPrice, maxPrice, search, featured, stockS
 const getById = (id) =>
   db.query('SELECT * FROM products WHERE id = $1', [id]);
 
-const createProduct = ({ name, description, price, category, stock, image_url, thumbnail_url, images, is_featured }) =>
+const createProduct = ({ name, description, price, category, stock, image_url, thumbnail_url, images, is_featured, return_policy, return_window_hours, final_sale }) =>
   db.query(
-    `INSERT INTO products (name, description, price, category, stock, image_url, thumbnail_url, images, is_featured)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO products (name, description, price, category, stock, image_url, thumbnail_url, images, is_featured, return_policy, return_window_hours, final_sale)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING *`,
-    [name, description, price, category, stock, image_url, thumbnail_url, JSON.stringify(images || []), is_featured === true || is_featured === 'true']
+    [name, description, price, category, stock, image_url, thumbnail_url, JSON.stringify(images || []), is_featured === true || is_featured === 'true', return_policy, return_window_hours, final_sale === true || final_sale === 'true']
   );
 
 const updateProduct = (id, fields) => {

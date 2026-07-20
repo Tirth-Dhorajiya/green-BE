@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { allocateNetUnitAmounts } = require('../services/returnPolicyService');
 
 const createOrderWithClient = async (client, userId, totalPrice, items, options = {}) => {
   const orderResult = await client.query(
@@ -31,10 +32,26 @@ const createOrderWithClient = async (client, userId, totalPrice, items, options 
     [order.id, order.status, options.changed_by || userId, options.note || 'Order created']
   );
 
-  for (const item of items) {
+  const allocatedItems = allocateNetUnitAmounts({
+    items,
+    subtotal: options.subtotal_price || totalPrice,
+    discount: options.discount_amount || 0,
+  });
+  for (const item of allocatedItems) {
+    const { rows: productRows } = await client.query(
+      `SELECT name, category, return_policy, return_window_hours, final_sale FROM products WHERE id = $1`,
+      [item.product_id]
+    );
+    const product = productRows[0] || {};
     await client.query(
-      `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)`,
-      [order.id, item.product_id, item.quantity, item.price]
+      `INSERT INTO order_items
+        (order_id, product_id, quantity, price, product_name_snapshot, category_snapshot,
+         return_policy_snapshot, return_window_hours_snapshot, final_sale_snapshot, net_unit_amount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [order.id, item.product_id, item.quantity, item.price, product.name || null, product.category || null,
+        product.return_policy || (product.category === 'plants' ? 'damage_only' : 'returnable'),
+        product.return_window_hours || (product.category === 'plants' ? 48 : 168),
+        product.final_sale === true, item.netLinePaise / 100 / Number(item.quantity)]
     );
     const stockResult = await client.query(
       `UPDATE products
@@ -81,6 +98,11 @@ const getOrdersByUser = (userId) =>
            'product_id', oi.product_id,
            'quantity', oi.quantity,
            'price', oi.price,
+           'net_unit_amount', COALESCE(oi.net_unit_amount, oi.price),
+           'category', COALESCE(oi.category_snapshot, p.category),
+           'return_policy', COALESCE(oi.return_policy_snapshot, p.return_policy),
+           'return_window_hours', COALESCE(oi.return_window_hours_snapshot, p.return_window_hours),
+           'final_sale', COALESCE(oi.final_sale_snapshot, p.final_sale, FALSE),
            'product_name', p.name,
            'image_url', COALESCE(p.thumbnail_url, p.image_url)
          )
@@ -122,6 +144,11 @@ const getCustomerOrdersForAdmin = (userId) =>
            'product_id', oi.product_id,
            'quantity', oi.quantity,
            'price', oi.price,
+           'net_unit_amount', COALESCE(oi.net_unit_amount, oi.price),
+           'category', COALESCE(oi.category_snapshot, p.category),
+           'return_policy', COALESCE(oi.return_policy_snapshot, p.return_policy),
+           'return_window_hours', COALESCE(oi.return_window_hours_snapshot, p.return_window_hours),
+           'final_sale', COALESCE(oi.final_sale_snapshot, p.final_sale, FALSE),
            'product_name', p.name,
            'image_url', COALESCE(p.thumbnail_url, p.image_url)
          )
@@ -201,6 +228,11 @@ const getAllOrders = ({ limit, offset, status, search, paymentStatus, couponStat
            'product_id', oi.product_id,
            'quantity', oi.quantity,
            'price', oi.price,
+           'net_unit_amount', COALESCE(oi.net_unit_amount, oi.price),
+           'category', COALESCE(oi.category_snapshot, p.category),
+           'return_policy', COALESCE(oi.return_policy_snapshot, p.return_policy),
+           'return_window_hours', COALESCE(oi.return_window_hours_snapshot, p.return_window_hours),
+           'final_sale', COALESCE(oi.final_sale_snapshot, p.final_sale, FALSE),
            'product_name', p.name,
            'image_url', COALESCE(p.thumbnail_url, p.image_url)
          )
@@ -245,6 +277,11 @@ const getOrderById = (orderId) =>
            'product_id', oi.product_id,
            'quantity', oi.quantity,
            'price', oi.price,
+           'net_unit_amount', COALESCE(oi.net_unit_amount, oi.price),
+           'category', COALESCE(oi.category_snapshot, p.category),
+           'return_policy', COALESCE(oi.return_policy_snapshot, p.return_policy),
+           'return_window_hours', COALESCE(oi.return_window_hours_snapshot, p.return_window_hours),
+           'final_sale', COALESCE(oi.final_sale_snapshot, p.final_sale, FALSE),
            'product_name', p.name,
            'image_url', COALESCE(p.thumbnail_url, p.image_url)
          )
@@ -288,6 +325,7 @@ const updateStatus = async (orderId, { status, changedBy, note, fulfillment = {}
     const updateResult = await client.query(
       `UPDATE orders
        SET status = $1,
+           delivered_at = CASE WHEN $1 = 'delivered' THEN COALESCE(delivered_at, NOW()) ELSE delivered_at END,
            courier_name = COALESCE($2, courier_name),
            tracking_number = COALESCE($3, tracking_number),
            estimated_delivery_date = COALESCE($4, estimated_delivery_date),
@@ -343,11 +381,18 @@ const hasDeliveredProduct = (userId, productId) =>
     `SELECT o.id AS order_id
      FROM orders o
      JOIN order_items oi ON oi.order_id = o.id
-     WHERE o.user_id = $1
-       AND oi.product_id = $2
-       AND o.status = 'delivered'
-       AND o.payment_status = 'paid'
-     ORDER BY o.created_at DESC
+      WHERE o.user_id = $1
+        AND oi.product_id = $2
+        AND o.status = 'delivered'
+        AND o.payment_status = 'paid'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM reviews r
+          WHERE r.product_id = $2
+            AND r.user_id = $1
+            AND r.order_id = o.id
+        )
+      ORDER BY o.created_at DESC
      LIMIT 1`,
     [userId, productId]
   );

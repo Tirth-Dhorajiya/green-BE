@@ -10,6 +10,8 @@ test('normalizes common Delhivery scan statuses', () => {
   assert.equal(delhivery.normalizeTrackingStatus('Delivered'), 'delivered');
   assert.equal(delhivery.normalizeTrackingStatus('Shipment Cancelled'), 'cancelled');
   assert.equal(delhivery.normalizeTrackingStatus('Undelivered', '', 'Address issue'), 'exception');
+  assert.equal(delhivery.normalizeTrackingStatus('In Transit', '', '', 'RT'), 'returning');
+  assert.equal(delhivery.normalizeTrackingStatus('Delivered', '', '', 'RT'), 'returned');
 });
 
 test('derives order state from multiple package states', () => {
@@ -18,6 +20,8 @@ test('derives order state from multiple package states', () => {
   assert.deepEqual(deriveAggregateStatuses(['delivered', 'delivered']), { shipmentStatus: 'delivered', orderStatus: 'delivered' });
   assert.deepEqual(deriveAggregateStatuses(['delivered', 'exception']), { shipmentStatus: 'partial', orderStatus: 'shipped' });
   assert.deepEqual(deriveAggregateStatuses(['cancelled', 'cancelled']), { shipmentStatus: 'cancelled', orderStatus: 'cancelled' });
+  assert.deepEqual(deriveAggregateStatuses(['returned', 'returned']), { shipmentStatus: 'returned', orderStatus: 'cancelled' });
+  assert.deepEqual(deriveAggregateStatuses(['returning', 'manifested']), { shipmentStatus: 'returning', orderStatus: 'shipped' });
 });
 
 test('creates stable event keys for webhook deduplication', () => {

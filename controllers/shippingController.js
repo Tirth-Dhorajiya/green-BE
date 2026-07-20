@@ -3,6 +3,8 @@ const orderModel = require('../models/orderModel');
 const shippingModel = require('../models/shippingModel');
 const delhivery = require('../services/delhiveryService');
 const { sendOrderEmail } = require('../services/emailService');
+const returnModel = require('../models/returnModel');
+const { callRefund } = require('./returnController');
 
 const notifyOrderTransition = async (orderId, previousStatus, nextStatus, type = 'status') => {
   if (previousStatus === nextStatus && type !== 'tracking') return;
@@ -16,7 +18,7 @@ const notifyOrderTransition = async (orderId, previousStatus, nextStatus, type =
 
 const applyTrackingEvent = async (waybill, event, estimatedDeliveryDate) => {
   if (!waybill) return null;
-  const normalizedStatus = delhivery.normalizeTrackingStatus(event.status, event.statusCode, event.instructions);
+  const normalizedStatus = delhivery.normalizeTrackingStatus(event.status, event.statusCode, event.instructions, event.statusType);
   return shippingModel.recordTrackingEvent({
     waybill,
     event,
@@ -24,6 +26,23 @@ const applyTrackingEvent = async (waybill, event, estimatedDeliveryDate) => {
     normalizedStatus,
     estimatedDeliveryDate,
   });
+};
+
+const refundCompletedRto = async (aggregate) => {
+  if (aggregate?.shipmentStatus !== 'returned' || aggregate.orderStatus !== 'cancelled') return;
+  const { rows } = await orderModel.getOrderById(aggregate.orderId);
+  const order = rows[0];
+  if (!order || order.payment_status !== 'paid' || !order.razorpay_payment_id) return;
+  try {
+    const refund = await returnModel.reserveRefund({
+      orderId: order.id,
+      paymentId: order.razorpay_payment_id,
+      amountPaise: Math.round(Number(order.total_price) * 100),
+    });
+    await callRefund(refund);
+  } catch (error) {
+    if (!/exceeds the remaining/i.test(error.message)) console.error('Automatic RTO refund failed', error.message);
+  }
 };
 
 const applyTrackingRecords = async (records) => {
@@ -42,6 +61,7 @@ const applyTrackingRecords = async (records) => {
     if (aggregate) {
       aggregates.push(aggregate);
       await notifyOrderTransition(aggregate.orderId, aggregate.previousOrderStatus, aggregate.orderStatus);
+      await refundCompletedRto(aggregate);
     }
   }
   return aggregates;
@@ -280,7 +300,10 @@ const handleWebhook = async (req, res, next) => {
     const result = await applyTrackingEvent(event.waybill, event, event.estimatedDeliveryDate);
     if (!result) return res.status(202).json({ success: true, message: 'Unknown waybill ignored' });
     const aggregate = await shippingModel.aggregateShipment(result.shipmentId);
-    if (aggregate) await notifyOrderTransition(aggregate.orderId, aggregate.previousOrderStatus, aggregate.orderStatus);
+    if (aggregate) {
+      await notifyOrderTransition(aggregate.orderId, aggregate.previousOrderStatus, aggregate.orderStatus);
+      await refundCompletedRto(aggregate);
+    }
     res.json({ success: true });
   } catch (error) {
     next(error);

@@ -120,4 +120,28 @@ const sendOrderEmail = async ({ to, order, type = 'status', note }) => {
   return { delivered: true };
 };
 
-module.exports = { sendOtpEmail, sendContactEmail, sendOrderEmail };
+const sendReturnEmail = async ({ to, request, type, note }) => {
+  const subjects = {
+    requested: 'Return request received', approved: 'Return request approved', rejected: 'Return request update',
+    cancelled: 'Return request withdrawn', reverse_created: 'Return pickup created', inspected: 'Return inspection completed',
+    refund_pending: 'Refund initiated', refund_processed: 'Refund processed', refund_failed: 'Refund needs attention',
+    replacement_created: 'Replacement shipment created',
+  };
+  const text = [
+    `Hello ${request.customer_name || request.shipping_address?.name || 'Customer'},`, '',
+    `Return: ${request.request_number}`, `Order: #${String(request.order_id).slice(0, 8)}`,
+    `Status: ${request.status}`, `Resolution: ${request.resolution_type || request.preferred_resolution}`,
+    ...(note ? ['', `Note: ${note}`] : []), '',
+    'You can view the latest return, parcel, and refund status in your Green Store order history.',
+  ].join('\n');
+  if (!hasSmtpConfig()) { console.log(`[DEV RETURN EMAIL] ${to}\n${text}`); return { delivered: false }; }
+  await createTransport().sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: `${subjects[type] || 'Return updated'} · ${request.request_number}`,
+    text,
+  });
+  return { delivered: true };
+};
+
+module.exports = { sendOtpEmail, sendContactEmail, sendOrderEmail, sendReturnEmail };

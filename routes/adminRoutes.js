@@ -2,7 +2,12 @@ const express = require('express');
 const { body, param } = require('express-validator');
 const { getDashboardStats, getCustomers, getCustomerDetails } = require('../controllers/adminController');
 const { getAllOrders, updateOrderStatus, refundOrder } = require('../controllers/orderController');
-const { getAdminReviews, updateReviewStatus } = require('../controllers/reviewController');
+const {
+  getAdminReviews,
+  updateReviewStatus,
+  updateReviewImageStatus,
+  deleteReviewImage,
+} = require('../controllers/reviewController');
 const { getAdminCoupons, createAdminCoupon, updateAdminCoupon } = require('../controllers/couponController');
 const {
   createShipment,
@@ -15,6 +20,12 @@ const {
 } = require('../controllers/shippingController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validate');
+const {
+  listAdminReturns, getReturn, decideReturn, createReverseShipment, inspectReturn,
+  initiateReturnRefund, retryRefund, refreshRefund, createReplacement,
+  linkExternalRefund,
+  markManualReturn,
+} = require('../controllers/returnController');
 
 const router = express.Router();
 
@@ -22,6 +33,47 @@ router.use(protect, adminOnly); // all admin routes guarded
 
 router.get('/stats', getDashboardStats);
 router.get('/orders', getAllOrders);
+router.get('/returns', listAdminReturns);
+router.get('/returns/:returnId', [param('returnId').isUUID().withMessage('Return ID must be valid')], validate, getReturn);
+router.post(
+  '/returns/:returnId/decision',
+  [
+    param('returnId').isUUID().withMessage('Return ID must be valid'),
+    body('decision').isIn(['approved', 'rejected']).withMessage('Decision must be approved or rejected'),
+    body('reason').custom((value, { req }) => req.body.decision !== 'rejected' || String(value || '').trim().length > 0).withMessage('A rejection reason is required'),
+    body('reverse_required').optional().isBoolean(),
+    body('manual_return').optional().isBoolean(),
+    body('items').optional().isArray({ min: 1 }),
+    body('items.*.id').optional().isUUID(),
+    body('items.*.approved_quantity').optional().isInt({ min: 0 }),
+  ], validate, decideReturn
+);
+const parcelRules = [
+  body('packages').isArray({ min: 1, max: 20 }).withMessage('Provide between 1 and 20 packages'),
+  body('packages.*.weight_grams').isFloat({ gt: 0 }).withMessage('Package weight must be positive'),
+  body('packages.*.length_cm').isFloat({ gt: 0 }).withMessage('Package length must be positive'),
+  body('packages.*.width_cm').isFloat({ gt: 0 }).withMessage('Package width must be positive'),
+  body('packages.*.height_cm').isFloat({ gt: 0 }).withMessage('Package height must be positive'),
+  body('packages.*.contents').trim().isLength({ min: 1, max: 500 }).withMessage('Package contents are required'),
+];
+router.post('/returns/:returnId/reverse-shipment', [param('returnId').isUUID(), ...parcelRules], validate, createReverseShipment);
+router.post('/returns/:returnId/manual-return', [param('returnId').isUUID(), body('note').optional().trim().isLength({ max: 500 })], validate, markManualReturn);
+router.post(
+  '/returns/:returnId/inspection',
+  [param('returnId').isUUID(), body('items').isArray({ min: 1 }), body('items.*.id').isUUID(), body('items.*.received_quantity').isInt({ min: 0 }), body('items.*.accepted_quantity').optional().isInt({ min: 0 }), body('items.*.resellable').optional().isBoolean(), body('items.*.condition_note').optional().trim().isLength({ max: 1000 })],
+  validate,
+  inspectReturn
+);
+router.post('/returns/:returnId/refunds', [param('returnId').isUUID(), body('items').optional().isArray({ min: 1 }), body('items.*.id').optional().isUUID(), body('items.*.quantity').optional().isInt({ min: 1 })], validate, initiateReturnRefund);
+router.post('/returns/:returnId/replacement', [param('returnId').isUUID(), body('items').isArray({ min: 1 }), body('items.*.id').isUUID(), body('items.*.quantity').isInt({ min: 1 }), ...parcelRules], validate, createReplacement);
+router.post('/refunds/:refundId/retry', [param('refundId').isUUID()], validate, retryRefund);
+router.post('/refunds/:refundId/refresh', [param('refundId').isUUID()], validate, refreshRefund);
+router.post(
+  '/refunds/link',
+  [body('order_id').isUUID().withMessage('Order ID must be valid'), body('return_request_id').optional({ nullable: true }).isUUID(), body('razorpay_refund_id').matches(/^rfnd_[A-Za-z0-9]+$/).withMessage('Razorpay refund ID is invalid')],
+  validate,
+  linkExternalRefund
+);
 router.get('/pickups', listPickups);
 router.get('/customers', getCustomers);
 router.get('/customers/:id', [param('id').isUUID().withMessage('Customer ID must be a valid UUID')], validate, getCustomerDetails);
@@ -153,6 +205,27 @@ router.put(
   ],
   validate,
   updateReviewStatus
+);
+
+router.put(
+  '/reviews/:reviewId/images/:imageId/status',
+  [
+    param('reviewId').isUUID().withMessage('Review ID must be a valid UUID'),
+    param('imageId').isUUID().withMessage('Review image ID must be a valid UUID'),
+    body('status').isIn(['visible', 'hidden']).withMessage('Invalid review image status'),
+  ],
+  validate,
+  updateReviewImageStatus
+);
+
+router.delete(
+  '/reviews/:reviewId/images/:imageId',
+  [
+    param('reviewId').isUUID().withMessage('Review ID must be a valid UUID'),
+    param('imageId').isUUID().withMessage('Review image ID must be a valid UUID'),
+  ],
+  validate,
+  deleteReviewImage
 );
 
 module.exports = router;

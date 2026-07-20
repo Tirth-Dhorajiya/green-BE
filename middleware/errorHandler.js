@@ -2,10 +2,23 @@
  * Centralized error handling middleware.
  * Must be registered AFTER all routes in server.js.
  */
-const errorHandler = (err, _req, res, _next) => {
+const errorHandler = (err, req, res, _next) => {
+  const isReviewUpload = req.originalUrl?.includes('/reviews');
   // Multer errors
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(400).json({ success: false, message: 'File size exceeds the allowed limit' });
+  }
+  if (err.code === 'LIMIT_FILE_COUNT') {
+    return res.status(400).json({
+      success: false,
+      message: isReviewUpload ? 'Upload no more than five review photos' : 'Too many files were uploaded',
+    });
+  }
+  if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({
+      success: false,
+      message: isReviewUpload ? 'The review photo upload is invalid' : 'The file upload is invalid',
+    });
   }
 
   // JWT errors

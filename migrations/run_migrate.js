@@ -12,6 +12,8 @@ async function migrate() {
       'add_product_images.sql',
       'order_fulfillment_tracking.sql',
       'shipping_integration.sql',
+      'returns_refunds.sql',
+      'review_images.sql',
     ];
 
     for (const migration of migrations) {

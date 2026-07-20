@@ -110,6 +110,14 @@ const checkServiceability = async (postalCode) => {
   };
 };
 
+const checkReverseServiceability = async (postalCode) => {
+  if (process.env.DELHIVERY_REVERSE_ENABLED !== 'true') {
+    return { postalCode: normalizePostalCode(postalCode), serviceable: false, reverse: false, remarks: 'Reverse pickup is not enabled' };
+  }
+  const result = await checkServiceability(postalCode);
+  return { ...result, reverse: result.serviceable };
+};
+
 const fetchWaybills = async (count) => {
   const config = getConfig();
   const { data } = await request('/waybill/api/bulk/json/', {
@@ -182,6 +190,56 @@ const manifestShipments = async ({ order, packages, providerReference, ewaybillN
   return data;
 };
 
+const buildReverseManifestPayload = ({ order, packages, providerReference, config, qc = false }) => {
+  const address = order.shipping_address || {};
+  return {
+    pickup_location: { name: config.pickupLocation },
+    shipments: packages.map((pkg) => ({
+      waybill: pkg.waybill,
+      order: providerReference,
+      order_date: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      payment_mode: 'Pickup',
+      name: address.name || order.user_name,
+      phone: String(address.phone || '').trim(),
+      add: [address.address, address.landmark].filter(Boolean).join(', '),
+      city: address.city,
+      state: address.state,
+      country: address.country || 'India',
+      pin: normalizePostalCode(address.postalCode),
+      products_desc: pkg.contents,
+      quantity: '1',
+      total_amount: 0,
+      cod_amount: 0,
+      weight: String(pkg.weight_grams),
+      shipment_length: Number(pkg.length_cm),
+      shipment_width: Number(pkg.width_cm),
+      shipment_height: Number(pkg.height_cm),
+      seller_name: config.clientName,
+      ...(qc ? { qc: 'Y' } : {}),
+    })),
+  };
+};
+
+const manifestReverseShipments = async ({ order, packages, providerReference }) => {
+  if (process.env.DELHIVERY_REVERSE_ENABLED !== 'true') {
+    throw new DelhiveryError('Delhivery reverse pickup is not enabled', 503);
+  }
+  const config = getConfig();
+  const qc = process.env.DELHIVERY_REVERSE_MODE === 'rvp_qc';
+  const payload = buildReverseManifestPayload({ order, packages, providerReference, config, qc });
+  const customEndpoint = process.env.DELHIVERY_RVP_ENDPOINT;
+  const { data } = customEndpoint
+    ? await request(customEndpoint, { method: 'POST', body: payload })
+    : await request('/api/cmu/create.json', { method: 'POST', form: { format: 'json', data: JSON.stringify(payload) } });
+  const successful = Array.isArray(data?.packages)
+    ? data.packages.filter((pkg) => String(pkg.status || '').toLowerCase() !== 'fail')
+    : [];
+  if (!data?.success || successful.length !== packages.length) {
+    throw new DelhiveryError(data?.rmk || data?.message || 'Delhivery reverse shipment creation failed', 502, data);
+  }
+  return data;
+};
+
 const getTracking = async ({ waybills, reference }) => {
   const { data } = await request('/api/v1/packages/json/', {
     query: {
@@ -236,11 +294,14 @@ const createPickup = async ({ pickupDate, pickupTime, expectedPackageCount }) =>
   return data;
 };
 
-const normalizeTrackingStatus = (status, statusCode = '', instructions = '') => {
-  const value = `${status} ${statusCode} ${instructions}`.toLowerCase();
+const normalizeTrackingStatus = (status, statusCode = '', instructions = '', statusType = '') => {
+  const value = `${status} ${statusCode} ${instructions} ${statusType}`.toLowerCase();
   if (value.includes('cancel')) return 'cancelled';
-  if (value.includes('return') || value.includes('rto') || value.includes('undelivered') || value.includes('exception')) return 'exception';
+  if (String(statusType).toUpperCase().includes('RT')) return value.includes('delivered') ? 'returned' : 'returning';
+  if (value.includes('undelivered')) return 'exception';
   if (value.includes('delivered')) return 'delivered';
+  if (value.includes('rto') && (value.includes('transit') || value.includes('return'))) return 'in_transit';
+  if (value.includes('return') || value.includes('undelivered') || value.includes('exception') || value.includes('lost')) return 'exception';
   if (value.includes('out for delivery') || value.includes('ofd')) return 'out_for_delivery';
   if (value.includes('transit') || value.includes('dispatch') || value.includes('picked') || value.includes('pickup complete')) return 'in_transit';
   return 'manifested';
@@ -304,9 +365,12 @@ module.exports = {
   getConfig,
   normalizePostalCode,
   checkServiceability,
+  checkReverseServiceability,
   fetchWaybills,
   buildManifestPayload,
   manifestShipments,
+  buildReverseManifestPayload,
+  manifestReverseShipments,
   getTracking,
   getLabel,
   downloadDocument,

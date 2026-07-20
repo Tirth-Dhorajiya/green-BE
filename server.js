@@ -19,7 +19,9 @@ const couponRoutes = require('./routes/couponRoutes');
 const wishlistRoutes = require('./routes/wishlistRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const shippingRoutes = require('./routes/shippingRoutes');
+const returnRoutes = require('./routes/returnRoutes');
 const { handleWebhook, reconcileShipments } = require('./controllers/shippingController');
+const { handleRazorpayWebhook, reconcileRefunds } = require('./controllers/returnController');
 
 const app = express();
 const allowedOrigins = (process.env.CLIENT_ORIGIN || '')
@@ -49,7 +51,7 @@ app.use(cors({
     : '*',
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
@@ -76,8 +78,11 @@ app.use('/api/coupons', couponRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/contact', [limiter], contactRoutes);
 app.use('/api/shipping', shippingRoutes);
+app.use('/api/returns', returnRoutes);
 app.post('/api/webhooks/delhivery', handleWebhook);
+app.post('/api/webhooks/razorpay', handleRazorpayWebhook);
 app.get('/api/internal/shipments/reconcile', reconcileShipments);
+app.get('/api/internal/refunds/reconcile', reconcileRefunds);
 app.use('/api/admin', adminRoutes);
 
 // ─── Root ─────────────────────────────────────────────────────────────────────

@@ -1,6 +1,9 @@
 const db = require('../config/db');
 
 const deriveAggregateStatuses = (statuses) => {
+  if (statuses.length && statuses.every((status) => status === 'returned')) {
+    return { shipmentStatus: 'returned', orderStatus: 'cancelled' };
+  }
   if (statuses.length && statuses.every((status) => status === 'delivered')) {
     return { shipmentStatus: 'delivered', orderStatus: 'delivered' };
   }
@@ -13,12 +16,16 @@ const deriveAggregateStatuses = (statuses) => {
       orderStatus: 'shipped',
     };
   }
+  if (statuses.some((status) => ['returning', 'returned'].includes(status))) {
+    return { shipmentStatus: 'returning', orderStatus: 'shipped' };
+  }
   return { shipmentStatus: 'manifested', orderStatus: 'processing' };
 };
 
 const safeShipmentSelect = `
   SELECT s.id, s.order_id, s.provider, s.provider_reference, s.provider_upload_id,
-         s.pickup_location, s.ewaybill_number, s.status, s.failure_message, s.manifested_at,
+         s.pickup_location, s.ewaybill_number, s.direction, s.purpose, s.return_request_id,
+         s.status, s.failure_message, s.manifested_at,
          s.cancelled_at, s.last_synced_at, s.created_at, s.updated_at,
          COALESCE((
            SELECT json_agg(
@@ -86,21 +93,27 @@ const getById = async (shipmentId) => {
 const getActiveByOrder = (orderId) =>
   db.query(
     `SELECT * FROM shipping_shipments
-     WHERE order_id = $1 AND status IN ('creating', 'manifested', 'in_transit', 'partial')
+     WHERE order_id = $1 AND direction = 'forward' AND purpose = 'fulfilment'
+       AND status IN ('creating', 'manifested', 'in_transit', 'partial', 'exception')
      ORDER BY created_at DESC LIMIT 1`,
     [orderId]
   );
 
-const createDraft = async ({ orderId, providerReference, pickupLocation, ewaybillNumber, packages, createdBy }) => {
+const createDraft = async ({
+  orderId, providerReference, pickupLocation, ewaybillNumber, packages, createdBy,
+  direction = 'forward', purpose = 'fulfilment', returnRequestId = null,
+}) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT id FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
     const active = await client.query(
       `SELECT id FROM shipping_shipments
-       WHERE order_id = $1 AND status IN ('creating', 'manifested', 'in_transit', 'partial')
+       WHERE (($2::uuid IS NOT NULL AND return_request_id = $2 AND direction = $3 AND purpose = $4)
+          OR ($2::uuid IS NULL AND order_id = $1 AND direction = $3 AND purpose = $4))
+         AND status IN ('creating', 'manifested', 'in_transit', 'partial', 'exception')
        ORDER BY created_at DESC LIMIT 1`,
-      [orderId]
+      [orderId, returnRequestId, direction, purpose]
     );
     if (active.rows.length) {
       await client.query('COMMIT');
@@ -108,9 +121,10 @@ const createDraft = async ({ orderId, providerReference, pickupLocation, ewaybil
     }
 
     const { rows } = await client.query(
-      `INSERT INTO shipping_shipments (order_id, provider_reference, pickup_location, ewaybill_number, created_by)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [orderId, providerReference, pickupLocation, ewaybillNumber || null, createdBy]
+      `INSERT INTO shipping_shipments
+        (order_id, provider_reference, pickup_location, ewaybill_number, created_by, direction, purpose, return_request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [orderId, providerReference, pickupLocation, ewaybillNumber || null, createdBy, direction, purpose, returnRequestId]
     );
     for (let index = 0; index < packages.length; index += 1) {
       const pkg = packages[index];
@@ -187,7 +201,7 @@ const recordTrackingEvent = async ({ waybill, event, eventKey, normalizedStatus,
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `SELECT p.*, s.order_id FROM shipping_packages p
+      `SELECT p.*, s.order_id, s.direction, s.purpose, s.return_request_id FROM shipping_packages p
        JOIN shipping_shipments s ON s.id = p.shipment_id
        WHERE p.waybill = $1 FOR UPDATE`,
       [waybill]
@@ -218,7 +232,7 @@ const recordTrackingEvent = async ({ waybill, event, eventKey, normalizedStatus,
     }
     await client.query('UPDATE shipping_shipments SET last_synced_at = NOW(), updated_at = NOW() WHERE id = $1', [pkg.shipment_id]);
     await client.query('COMMIT');
-    return { shipmentId: pkg.shipment_id, orderId: pkg.order_id };
+    return { shipmentId: pkg.shipment_id, orderId: pkg.order_id, direction: pkg.direction, purpose: pkg.purpose, returnRequestId: pkg.return_request_id };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -240,6 +254,56 @@ const aggregateShipment = async (shipmentId) => {
     const { rows: packages } = await client.query('SELECT * FROM shipping_packages WHERE shipment_id = $1 ORDER BY sequence', [shipmentId]);
     const statuses = packages.map((pkg) => pkg.status);
     const { shipmentStatus, orderStatus } = deriveAggregateStatuses(statuses);
+
+    if (shipment.direction === 'reverse' || shipment.purpose !== 'fulfilment') {
+      const providerStatus = shipmentStatus === 'delivered' && shipment.direction === 'reverse' ? 'returned' : shipmentStatus;
+      await client.query(
+        `UPDATE shipping_shipments SET status = $2, updated_at = NOW(),
+           cancelled_at = CASE WHEN $2 = 'cancelled' THEN COALESCE(cancelled_at, NOW()) ELSE cancelled_at END
+         WHERE id = $1`, [shipmentId, providerStatus]
+      );
+      let returnStatus = null;
+      if (shipment.return_request_id && shipment.direction === 'reverse') {
+        returnStatus = providerStatus === 'returned' ? 'received'
+          : providerStatus === 'cancelled' ? 'exception'
+            : ['in_transit', 'partial'].includes(providerStatus) ? 'reverse_in_transit'
+              : 'reverse_pending';
+        const { rows: returnRows } = await client.query('SELECT status FROM return_requests WHERE id = $1 FOR UPDATE', [shipment.return_request_id]);
+        if (returnRows.length && returnRows[0].status !== returnStatus && !['resolved', 'rejected', 'cancelled'].includes(returnRows[0].status)) {
+          await client.query(
+            `UPDATE return_requests SET status = $2,
+               received_at = CASE WHEN $2 = 'received' THEN COALESCE(received_at, NOW()) ELSE received_at END,
+               updated_at = NOW() WHERE id = $1`, [shipment.return_request_id, returnStatus]
+          );
+          await client.query(
+            `INSERT INTO return_status_history (return_request_id, from_status, to_status, note)
+             VALUES ($1, $2, $3, $4)`, [shipment.return_request_id, returnRows[0].status, returnStatus, `Updated from Delhivery ${shipment.provider_reference}`]
+          );
+        }
+      }
+      if (shipment.return_request_id && shipment.purpose === 'replacement' && providerStatus === 'delivered') {
+        const { rows: returnRows } = await client.query('SELECT status FROM return_requests WHERE id = $1 FOR UPDATE', [shipment.return_request_id]);
+        const { rows: refundRows } = await client.query(
+          `SELECT COUNT(*) FILTER (WHERE status IN ('creating', 'pending')) AS pending,
+                  COUNT(*) FILTER (WHERE status = 'processed') AS processed
+           FROM payment_refunds WHERE return_request_id = $1`, [shipment.return_request_id]
+        );
+        if (returnRows.length && returnRows[0].status !== 'resolved' && Number(refundRows[0].pending) === 0) {
+          await client.query(
+            `UPDATE return_requests SET status = 'resolved', resolution_type = CASE WHEN $2 > 0 THEN 'mixed' ELSE 'replacement' END,
+               resolved_at = NOW(), updated_at = NOW() WHERE id = $1`,
+            [shipment.return_request_id, Number(refundRows[0].processed)]
+          );
+          await client.query(
+            `INSERT INTO return_status_history (return_request_id, from_status, to_status, note)
+             VALUES ($1, $2, 'resolved', $3)`, [shipment.return_request_id, returnRows[0].status, 'Replacement delivered']
+          );
+          returnStatus = 'resolved';
+        }
+      }
+      await client.query('COMMIT');
+      return { orderId: shipment.order_id, previousOrderStatus: null, orderStatus: null, shipmentStatus: providerStatus, returnRequestId: shipment.return_request_id, returnStatus };
+    }
 
     await client.query(
       `UPDATE shipping_shipments
@@ -264,6 +328,9 @@ const aggregateShipment = async (shipmentId) => {
        WHERE id = $1`,
       [order.id, nextOrderStatus, primary?.waybill || null, eta]
     );
+    if (nextOrderStatus === 'delivered') {
+      await client.query('UPDATE orders SET delivered_at = COALESCE(delivered_at, NOW()) WHERE id = $1', [order.id]);
+    }
     if (nextOrderStatus !== order.status) {
       await client.query(
         `INSERT INTO order_status_history (order_id, from_status, to_status, note)
@@ -286,7 +353,7 @@ const getReconcileShipments = () =>
     `SELECT s.id, s.provider_reference, array_agg(p.waybill ORDER BY p.sequence) AS waybills
      FROM shipping_shipments s
      JOIN shipping_packages p ON p.shipment_id = s.id
-     WHERE s.status IN ('manifested', 'in_transit', 'partial') AND p.waybill IS NOT NULL
+     WHERE s.status IN ('manifested', 'in_transit', 'partial', 'returning', 'exception') AND p.waybill IS NOT NULL
      GROUP BY s.id ORDER BY COALESCE(s.last_synced_at, s.created_at) ASC LIMIT 100`
   );
 
