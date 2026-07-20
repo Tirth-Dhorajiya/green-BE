@@ -18,6 +18,8 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const wishlistRoutes = require('./routes/wishlistRoutes');
 const contactRoutes = require('./routes/contactRoutes');
+const shippingRoutes = require('./routes/shippingRoutes');
+const { handleWebhook, reconcileShipments } = require('./controllers/shippingController');
 
 const app = express();
 const allowedOrigins = (process.env.CLIENT_ORIGIN || '')
@@ -73,6 +75,9 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/contact', [limiter], contactRoutes);
+app.use('/api/shipping', shippingRoutes);
+app.post('/api/webhooks/delhivery', handleWebhook);
+app.get('/api/internal/shipments/reconcile', reconcileShipments);
 app.use('/api/admin', adminRoutes);
 
 // ─── Root ─────────────────────────────────────────────────────────────────────

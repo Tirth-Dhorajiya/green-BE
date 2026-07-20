@@ -1,6 +1,8 @@
 const orderModel = require('../models/orderModel');
 const cartModel = require('../models/cartModel');
 const { sendOrderEmail } = require('../services/emailService');
+const shippingModel = require('../models/shippingModel');
+const { cancelActiveShipmentForOrder } = require('./shippingController');
 
 const notifyOrder = (order, type, note) => {
   if (!order?.user_email) return;
@@ -58,7 +60,7 @@ const createOrder = async (req, res, next) => {
 const getUserOrders = async (req, res, next) => {
   try {
     const { rows } = await orderModel.getOrdersByUser(req.user.id);
-    res.json({ success: true, orders: rows });
+    res.json({ success: true, orders: await shippingModel.attachShipments(rows) });
   } catch (err) {
     next(err);
   }
@@ -71,7 +73,8 @@ const getOrderDetails = async (req, res, next) => {
     if (!rows.length || (rows[0].user_id !== req.user.id && req.user.role !== 'admin')) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    res.json({ success: true, order: rows[0] });
+    const [order] = await shippingModel.attachShipments([rows[0]]);
+    res.json({ success: true, order });
   } catch (err) {
     next(err);
   }
@@ -106,7 +109,7 @@ const getAllOrders = async (req, res, next) => {
     });
 
     const totalCount = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
-    const orders = rows.map(({ total_count, ...o }) => o);
+    const orders = await shippingModel.attachShipments(rows.map(({ total_count, ...o }) => o), { includeFailed: true });
 
     res.json({
       success: true,
@@ -141,6 +144,8 @@ const updateOrderStatus = async (req, res, next) => {
       });
     }
 
+    const cancelledShipment = status === 'cancelled' ? await cancelActiveShipmentForOrder(req.params.id) : null;
+
     const { rows } = await orderModel.updateStatus(req.params.id, {
       status,
       changedBy: req.user.id,
@@ -158,7 +163,9 @@ const updateOrderStatus = async (req, res, next) => {
 
     const { rows: detailRows } = await orderModel.getOrderById(req.params.id);
     const order = detailRows[0] || rows[0];
-    notifyOrder(order, tracking_number || courier_name ? 'tracking' : status === 'cancelled' ? 'cancelled' : 'status', note);
+    if (!cancelledShipment) {
+      notifyOrder(order, tracking_number || courier_name ? 'tracking' : status === 'cancelled' ? 'cancelled' : 'status', note);
+    }
 
     res.json({ success: true, message: 'Order status updated', order });
   } catch (err) {
@@ -179,6 +186,8 @@ const cancelUserOrder = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Only pending or processing orders can be cancelled' });
     }
 
+    const cancelledShipment = await cancelActiveShipmentForOrder(req.params.id);
+
     const { rows: updatedRows } = await orderModel.updateStatus(req.params.id, {
       status: 'cancelled',
       changedBy: req.user.id,
@@ -187,7 +196,7 @@ const cancelUserOrder = async (req, res, next) => {
 
     const { rows: detailRows } = await orderModel.getOrderById(req.params.id);
     const updatedOrder = detailRows[0] || updatedRows[0];
-    notifyOrder(updatedOrder, 'cancelled', 'Cancelled by customer');
+    if (!cancelledShipment) notifyOrder(updatedOrder, 'cancelled', 'Cancelled by customer');
 
     res.json({
       success: true,

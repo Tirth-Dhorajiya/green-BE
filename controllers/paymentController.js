@@ -6,6 +6,7 @@ const orderModel = require('../models/orderModel');
 const paymentModel = require('../models/paymentModel');
 const couponModel = require('../models/couponModel');
 const { sendOrderEmail } = require('../services/emailService');
+const { checkServiceability } = require('../services/delhiveryService');
 
 const getRazorpay = () => {
   if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
@@ -69,8 +70,13 @@ const applyCoupon = async (code, subtotal) => {
 const createRazorpayOrder = async (req, res, next) => {
   try {
     const { shipping_address, coupon_code } = req.body;
-    if (!shipping_address || !shipping_address.phone || !shipping_address.address || !shipping_address.city || !shipping_address.postalCode) {
+    if (!shipping_address || !shipping_address.name || !shipping_address.phone || !shipping_address.address || !shipping_address.city || !shipping_address.state || !shipping_address.postalCode) {
       return res.status(400).json({ success: false, message: 'Complete shipping address is required' });
+    }
+
+    const delivery = await checkServiceability(shipping_address.postalCode);
+    if (!delivery.serviceable) {
+      return res.status(422).json({ success: false, message: 'Delhivery prepaid delivery is not available for this postal code' });
     }
 
     const { total: subtotal } = await getCartTotal(req.user.id);

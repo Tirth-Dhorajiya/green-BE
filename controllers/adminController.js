@@ -1,6 +1,7 @@
 const userModel = require('../models/userModel');
 const orderModel = require('../models/orderModel');
 const productModel = require('../models/productModel');
+const shippingModel = require('../models/shippingModel');
 
 // GET /api/admin/stats
 const getDashboardStats = async (req, res, next) => {
@@ -63,7 +64,8 @@ const getCustomerDetails = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Customer not found' });
     }
 
-    const summary = orders.reduce(
+    const hydratedOrders = await shippingModel.attachShipments(orders, { includeFailed: true });
+    const summary = hydratedOrders.reduce(
       (acc, order) => {
         const total = Number(order.total_price || 0);
         const discount = Number(order.discount_amount || 0);
@@ -89,9 +91,9 @@ const getCustomerDetails = async (req, res, next) => {
       customer: customerRows[0],
       summary: {
         ...summary,
-        lastOrderAt: orders[0]?.created_at || null,
+        lastOrderAt: hydratedOrders[0]?.created_at || null,
       },
-      orders,
+      orders: hydratedOrders,
     });
   } catch (err) {
     next(err);

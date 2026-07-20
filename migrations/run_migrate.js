@@ -7,9 +7,18 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function migrate() {
   try {
-    const sql = fs.readFileSync(path.join(__dirname, 'commerce_completion.sql'), 'utf8');
-    await pool.query(sql);
-    console.log('Commerce migration applied successfully');
+    const migrations = [
+      'commerce_completion.sql',
+      'add_product_images.sql',
+      'order_fulfillment_tracking.sql',
+      'shipping_integration.sql',
+    ];
+
+    for (const migration of migrations) {
+      const sql = fs.readFileSync(path.join(__dirname, migration), 'utf8');
+      await pool.query(sql);
+      console.log(`${migration} applied successfully`);
+    }
   } catch (err) {
     console.error('Migration failed:', err.message);
     process.exitCode = 1;
