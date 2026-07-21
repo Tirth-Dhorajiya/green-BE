@@ -1,0 +1,17 @@
+{
+  "version": "2026.1",
+  "rules": {
+    "spaces": {
+      "indoor": ["small planter", "pot", "watering can", "grow bag"],
+      "balcony": ["planter", "pot", "grow bag", "watering can"],
+      "terrace": ["grow bag", "large planter", "trowel", "watering can"],
+      "garden": ["trowel", "hand fork", "watering can", "garden tool"]
+    },
+    "methods": {
+      "nursery": ["seed tray", "nursery tray", "transplanter"],
+      "transplant": ["transplanter", "trowel", "seed tray"],
+      "direct-sow": ["trowel", "hand fork", "watering can"]
+    },
+    "climber": ["trellis", "plant support", "garden net", "support stick"]
+  }
+}

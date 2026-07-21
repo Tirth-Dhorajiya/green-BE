@@ -14,6 +14,7 @@ async function migrate() {
       'shipping_integration.sql',
       'returns_refunds.sql',
       'review_images.sql',
+      'growing_plans.sql',
     ];
 
     for (const migration of migrations) {

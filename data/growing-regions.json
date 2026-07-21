@@ -1,0 +1,12 @@
+{
+  "version": "2026.1",
+  "regions": [
+    { "slug": "north-plains", "name": "North Plains", "summary": "Seasonal plains with hot summers, a monsoon period and cool winters." },
+    { "slug": "himalayan-hill", "name": "Himalayan and Hill", "summary": "Cooler hill climates with shorter warm seasons and altitude-sensitive timing." },
+    { "slug": "western-arid", "name": "Western Arid", "summary": "Hot, dry and semi-arid areas where shade and careful watering often matter." },
+    { "slug": "central-plateau", "name": "Central Plateau", "summary": "Warm inland conditions with strong summer heat and a distinct monsoon." },
+    { "slug": "eastern-humid", "name": "Eastern Humid", "summary": "Warm, humid areas with generous monsoon rainfall and mild cool seasons." },
+    { "slug": "southern-tropical", "name": "Southern Tropical", "summary": "Mostly warm growing conditions with regional monsoon and summer-heat differences." },
+    { "slug": "coastal", "name": "Coastal", "summary": "Humid maritime conditions with mild winters, salt exposure and heavy seasonal rain." }
+  ]
+}

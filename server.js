@@ -20,6 +20,7 @@ const wishlistRoutes = require('./routes/wishlistRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const shippingRoutes = require('./routes/shippingRoutes');
 const returnRoutes = require('./routes/returnRoutes');
+const growingRoutes = require('./routes/growingRoutes');
 const { handleWebhook, reconcileShipments } = require('./controllers/shippingController');
 const { handleRazorpayWebhook, reconcileRefunds } = require('./controllers/returnController');
 
@@ -79,6 +80,7 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/contact', [limiter], contactRoutes);
 app.use('/api/shipping', shippingRoutes);
 app.use('/api/returns', returnRoutes);
+app.use('/api/growing', [limiter], growingRoutes);
 app.post('/api/webhooks/delhivery', handleWebhook);
 app.post('/api/webhooks/razorpay', handleRazorpayWebhook);
 app.get('/api/internal/shipments/reconcile', reconcileShipments);

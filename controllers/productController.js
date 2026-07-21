@@ -121,6 +121,7 @@ const updateProduct = async (req, res, next) => {
     updatable.forEach((key) => {
       if (req.body[key] !== undefined) fields[key] = req.body[key];
     });
+    if (fields.is_featured !== undefined) fields.is_featured = parseBoolean(fields.is_featured);
     if (fields.final_sale !== undefined) fields.final_sale = parseBoolean(fields.final_sale);
     if (fields.description !== undefined) fields.description = sanitizeProductDescription(fields.description);
 
